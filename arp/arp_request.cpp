@@ -77,6 +77,7 @@ void recv_cout(int recv_socket){
             cout << hex << (unsigned int)((unsigned char)tmp_packet->src_MAC[i]) << " ";
         cout << endl;
         memset(tmp_packet, 0, sizeof(tmp_packet));
+        memset(buf, 0, sizeof(buf));
 
         if(sent_num >= 254){
             sleep(3);
