@@ -39,11 +39,12 @@ struct arp_packet{
     char dst_MAC[6];
     u_int32_t dst_IP;
 
-    char padding[18];
+    //char padding[18];
 };
 
 extern int h_errno;
 extern int errno;
+static int sent_num = 0;   //number of sent arp packets
 
 void recv_cout(int recv_socket){
     unsigned char buf[80];
@@ -53,7 +54,7 @@ void recv_cout(int recv_socket){
 
     arp_packet* tmp_packet = nullptr;
 
-    struct timeval tv = {3, 0};      //set receive timeout 3s
+    struct timeval tv = {255, 0};      //set receive timeout 255s
     if(setsockopt(recv_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0){
         cout << "ERROR: failed to set socket receive timeout" << endl;
         cout << strerror(errno) << endl;
@@ -61,8 +62,9 @@ void recv_cout(int recv_socket){
 
     for(int i = 0; i < 5000; ++i){
         if(recvfrom(recv_socket, buf, sizeof(buf), 0, NULL, NULL) < 0){
-            if(errno == EAGAIN || errno == EWOULDBLOCK)
+            if(errno == EAGAIN || errno == EWOULDBLOCK){
                 break;
+            }
             else{
                 cout << "ERROR: during receiving" << endl;
                 cout << strerror(errno) << endl;
@@ -75,8 +77,14 @@ void recv_cout(int recv_socket){
             cout << hex << (unsigned int)((unsigned char)tmp_packet->src_MAC[i]) << " ";
         cout << endl;
         memset(tmp_packet, 0, sizeof(tmp_packet));
+
+        if(sent_num >= 254){
+            sleep(3);
+            break;
+        }
     }
 
+    cout << "INFO: receive done" << endl;
     return;
 }
 
@@ -177,7 +185,7 @@ int main(int argc, char** argv){
 
     memcpy(packet_to_send.src_MAC, MAC, 6);
     packet_to_send.src_IP = ipaddr.s_addr;
-    memset(packet_to_send.dst_MAC, 0, 6);   //config second layer
+    memset(packet_to_send.dst_MAC, 0xff, 6);   //config second layer
 
     thread recv1(recv_cout, packet_socket);  //create receive thread
 
@@ -194,6 +202,8 @@ int main(int argc, char** argv){
             //cout << sizeof(packet_to_send) << "  " << sizeof(send_addr) << endl;
             //cout << length << endl;
         }
+        ++sent_num;
+        usleep(500000);
     }
 
     recv1.join();
