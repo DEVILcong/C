@@ -193,7 +193,7 @@ int main(int argc, char** argv){
     for(int i = 0; i < 254; ++i){
         ip_in_dec += 1;
         tmp_ip_addr = htonl(ip_in_dec);
-        memcpy(&(packet_to_send.dst_MAC[6]), &tmp_ip_addr, 4);
+        memcpy(&(packet_to_send.dst_MAC[6]), &tmp_ip_addr, 4); //due to c/c++ struct align mechanism
         if(int length = sendto(packet_socket, &packet_to_send, sizeof(packet_to_send), 0,(struct sockaddr*) &send_addr, sizeof(send_addr)) < 0){
             cout << "WARNING: packet " << i << " failed to send" << endl;
             cout << strerror(errno) << endl;
