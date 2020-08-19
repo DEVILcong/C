@@ -1,0 +1,22 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/read_rsaKey.hpp
+openssl/bio.h
+-
+openssl/pem.h
+-
+openssl/evp.h
+-
+iostream
+-
+
+/home/liang/Code/cORcpp/chat/common/read_rsaKey/source/test.cpp
+read_rsaKey.hpp
+/home/liang/Code/cORcpp/chat/common/read_rsaKey/source/read_rsaKey.hpp
+

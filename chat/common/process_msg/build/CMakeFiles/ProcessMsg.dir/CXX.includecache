@@ -1,0 +1,30 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/process_msg.hpp
+openssl/evp.h
+-
+openssl/bio.h
+-
+openssl/rsa.h
+-
+openssl/buffer.h
+-
+cstring
+-
+cstddef
+-
+iostream
+-
+memory
+-
+
+/home/liang/Code/cORcpp/chat/common/process_msg/source/process_msg.cpp
+process_msg.hpp
+/home/liang/Code/cORcpp/chat/common/process_msg/source/process_msg.hpp
+

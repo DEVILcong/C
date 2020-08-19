@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/make_aesKey.hpp
+iostream
+-
+openssl/bn.h
+-
+
+/home/liang/Code/cORcpp/chat/common/make_aesKey/source/make_aesKey.cpp
+make_aesKey.hpp
+/home/liang/Code/cORcpp/chat/common/make_aesKey/source/make_aesKey.hpp
+
