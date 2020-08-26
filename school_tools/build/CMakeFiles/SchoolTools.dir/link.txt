@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC   -shared -Wl,-soname,libSchoolTools.so -o libSchoolTools.so CMakeFiles/SchoolTools.dir/source/school_tools.cpp.o -Wl,-rpath,/root/code/cORcpp/school_tools/libs ../libs/libCharacterConvert.so -lcurl 

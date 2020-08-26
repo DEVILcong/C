@@ -1,0 +1,1 @@
+/usr/bin/c++     CMakeFiles/test.dir/source/test.cpp.o  -o test -Wl,-rpath,/root/code/cORcpp/character_convert/build libCharacterConvert.so -liconv 

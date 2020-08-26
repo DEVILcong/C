@@ -1,0 +1,4 @@
+/root/code/cORcpp/school_tools/build/CMakeFiles/rebuild_cache.dir
+/root/code/cORcpp/school_tools/build/CMakeFiles/edit_cache.dir
+/root/code/cORcpp/school_tools/build/CMakeFiles/test.dir
+/root/code/cORcpp/school_tools/build/CMakeFiles/SchoolTools.dir

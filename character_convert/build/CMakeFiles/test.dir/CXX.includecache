@@ -1,0 +1,24 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/character_convert.hpp
+iconv.h
+-
+memory
+-
+cstring
+-
+
+/root/code/cORcpp/character_convert/source/test.cpp
+character_convert.hpp
+/root/code/cORcpp/character_convert/source/character_convert.hpp
+cstring
+-
+iostream
+-
+

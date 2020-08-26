@@ -1,0 +1,4 @@
+/root/code/cORcpp/character_convert/build/CMakeFiles/rebuild_cache.dir
+/root/code/cORcpp/character_convert/build/CMakeFiles/test.dir
+/root/code/cORcpp/character_convert/build/CMakeFiles/edit_cache.dir
+/root/code/cORcpp/character_convert/build/CMakeFiles/CharacterConvert.dir
