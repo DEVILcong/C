@@ -9,7 +9,7 @@
 #include <memory>
 #include <regex>
 
-#include "character_convert.hpp"
+#include "character_convert.hpp"  //utf-8转GBK
 
 #define MAX_BUFFER_SIZE 8192
 #define LIGHT_BILL_DOOR "http://172.16.254.43/ahdxDfcxInputDoor.action?id=1"
@@ -37,10 +37,12 @@ public:
 
 class SchoolTools{
 public:
-    SchoolTools(bool out_flag);
+    SchoolTools(bool out_flag);  //是否cout打印错误信息
     ~SchoolTools();
-    void test();
-    bool isSuccess();
+    void test();      //示例函数，可直接运行
+    bool isSuccess(); //判断上一步操作是否成功，可不用
+
+    //example: "枣园一号楼", "1428", "0"(照明电费)/"1"(空调电费), 后两个参数接收数据 1.电费余额 2.总用电量（度）
     void getPowerBalance(char* buildingID, char* roomID, int category, float* balance, float* all);
     
 private:
