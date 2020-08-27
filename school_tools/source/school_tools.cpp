@@ -90,11 +90,11 @@ size_t SchoolTools::write_callback(char* ptr, size_t size, size_t nmemb, void* u
 void SchoolTools::test(){
     float balance = 0;
     float all = 0;
-    this->getPowerBalance("枣园一号楼", "1428", 0, &balance, &all);
+    this->getPowerBalance("枣园一号楼", "1888", 0, &balance, &all);
     std::cout << balance << "\t" << all << std::endl;
 
-    //this->getPowerBalance("枣园一号楼", "1428", 1, &balance, &all);
-    //std::cout << balance << "\t" << all << std::endl;
+    this->getPowerBalance("枣园一号楼", "1428", 1, &balance, &all);
+    std::cout << balance << "\t" << all << std::endl;
 }
 
 void SchoolTools::getPowerBalance(char* buildingID, char* roomID, int category, float* balance, float* all){
@@ -181,10 +181,10 @@ bool SchoolTools::get_power_check(char* buildingID, char* roomID){
     delete [] full_url;
     curl_free(tmp_ID);
     
-    if(this->buffer.data[0] == '0')
+    //if(this->buffer.data[0] == '-')
+    //    return false;
+    //else 
         return true;
-    else 
-        return false;
 }
 
 void SchoolTools::get_power_2(char* buildingID, char* roomID, int category, float* balance, float* all){
@@ -245,7 +245,7 @@ void SchoolTools::get_power_2(char* buildingID, char* roomID, int category, floa
     }
 
     //std::cout << this->buffer.size << this->buffer.data << std::endl;
-    
+
     std::regex pattern(DATA_PATTERN);
     std::cmatch result;
     std::regex_search(this->buffer.data, result, pattern);
@@ -257,8 +257,15 @@ void SchoolTools::get_power_2(char* buildingID, char* roomID, int category, floa
         return;
     }
 
-    *balance = std::stof(result[1].str());
-    *all = std::stof(result[2].str());
-    this->success_flag = true;
+    try{
+        *balance = std::stof(result[1].str());
+        *all = std::stof(result[2].str());
+        this->success_flag = true;
+    }catch(std::invalid_argument &ia){
+        *balance = -6;
+        *all = -6;    
+    }
+
+    return;
 }
 
