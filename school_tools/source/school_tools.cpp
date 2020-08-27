@@ -90,7 +90,7 @@ size_t SchoolTools::write_callback(char* ptr, size_t size, size_t nmemb, void* u
 void SchoolTools::test(){
     float balance = 0;
     float all = 0;
-    this->getPowerBalance("枣园一号楼", "1888", 0, &balance, &all);
+    this->getPowerBalance("枣园一号楼", "1428", 0, &balance, &all);
     std::cout << balance << "\t" << all << std::endl;
 
     this->getPowerBalance("枣园一号楼", "1428", 1, &balance, &all);
@@ -206,12 +206,12 @@ void SchoolTools::get_power_2(char* buildingID, char* roomID, int category, floa
     else if(category == POWER_CATEGORY_AIR_CONDITIONER)
         curl_easy_setopt(this->curl, CURLOPT_REFERER, AIR_BILL_DOOR);
 
-    if(!this->get_power_check(buildingID, roomID)){
+    /*if(!this->get_power_check(buildingID, roomID)){
         *balance = -3;
         *all = -3;
         this->success_flag = false;
         return;
-    }
+    }*/
     this->buffer.size = 0;
     
     curl_easy_setopt(this->curl, CURLOPT_URL, POWER_BILL);
