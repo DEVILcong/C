@@ -1,1 +1,0 @@
-/usr/bin/c++    -rdynamic CMakeFiles/test.dir/source/test.cpp.o  -o test -Wl,-rpath,/root/code/cORcpp/school_tools/build:/root/code/cORcpp/school_tools/libs libSchoolTools.so ../libs/libCharacterConvert.so -lcurl 

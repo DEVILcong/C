@@ -34,6 +34,8 @@ SchoolTools::SchoolTools(bool out_flag){
 void SchoolTools::curl_config(void){
     memset(this->errmsg, 0, CURL_ERROR_SIZE);
     
+    this->status = curl_easy_setopt(this->curl, CURLOPT_TIMEOUT, 5);
+    
     this->status = curl_easy_setopt(this->curl, CURLOPT_COOKIEFILE, " ");    //enable cookie support
     this->status = curl_easy_setopt(this->curl, CURLOPT_ERRORBUFFER, this->errmsg);  
 
@@ -91,8 +93,8 @@ void SchoolTools::test(){
     this->getPowerBalance("枣园一号楼", "1428", 0, &balance, &all);
     std::cout << balance << "\t" << all << std::endl;
 
-    this->getPowerBalance("枣园一号楼", "1428", 1, &balance, &all);
-    std::cout << balance << "\t" << all << std::endl;
+    //this->getPowerBalance("枣园一号楼", "1428", 1, &balance, &all);
+    //std::cout << balance << "\t" << all << std::endl;
 }
 
 void SchoolTools::getPowerBalance(char* buildingID, char* roomID, int category, float* balance, float* all){
@@ -178,9 +180,8 @@ bool SchoolTools::get_power_check(char* buildingID, char* roomID){
     delete [] data;
     delete [] full_url;
     curl_free(tmp_ID);
-
     
-    if(this->buffer.data[0] = '0')
+    if(this->buffer.data[0] == '0')
         return true;
     else 
         return false;
