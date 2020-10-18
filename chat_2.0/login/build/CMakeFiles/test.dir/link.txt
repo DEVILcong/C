@@ -1,1 +1,1 @@
-/usr/bin/c++     CMakeFiles/test.dir/source/test.cpp.o  -o test  -Wl,-rpath,/home/liang/Code/C-or-Cpp/chat_2.0/login/build libLogin.so 
+/usr/bin/c++     CMakeFiles/test.dir/source/test.cpp.o  -o test  -Wl,-rpath,/home/liang/Code/C-or-Cpp/chat_2.0/login/build libLogin.so -lmysqlpp -lpthread 
