@@ -121,7 +121,7 @@ void login::listener(void){
     struct client_socket_t tmp_client_socket;
     int tmp_num = 0;
     int tmp_num_2 = 0;
-    socklen_t sock_addr_length = 0;
+    socklen_t sock_addr_length = sizeof(struct sockaddr);
 
     std::string to_query = "select password from ";
     to_query += MYSQL_TABLE;
@@ -173,10 +173,10 @@ void login::listener(void){
                 }
                 
                 if(ready_sockets[tmp_num].data.fd == listen_socket){  //信息来自监听socket
-                    std::cout << "Listener accept socket\n";
+                    //std::cout << "Listener accept socket\n";
                     for(tmp_num_2 = 0; tmp_num_2 < MAX_LISTEN_QUEUE; ++tmp_num_2){
                         tmp_socket = accept(listen_socket, (sockaddr*)&tmp_sockaddr, &sock_addr_length);
-                        if(tmp_socket == -1 || errno == EAGAIN || errno == EWOULDBLOCK)
+                        if(tmp_socket == -1 )
                             break;
                         
                         write_log_mtx.lock();
@@ -211,9 +211,9 @@ void login::listener(void){
                         write_log_mtx.lock();
                         log_file << now_time() << '\t' << "Info: add connection successfully\n";
                         write_log_mtx.unlock();
+
                     }
                 }else{  //信息来自连接的客户端socket
-                    std::cout << "Listener client socket\n";
                     tmp_socket = ready_sockets[tmp_num].data.fd;
                     memset(&tmp_login_msg, 0, sizeof(login_message_t));
 
