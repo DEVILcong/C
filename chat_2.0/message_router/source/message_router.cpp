@@ -160,7 +160,7 @@ void Message_router::message_consumer(void){
     struct message_item tmp_message_item;
     std::shared_lock<std::shared_mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
-    std::shared_lock<std::shared_mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
+    std::unique_lock<std::shared_mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
     std::unique_lock<std::shared_mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
 
     int tmp_status = 0;
@@ -182,6 +182,7 @@ void Message_router::message_consumer(void){
         tmp_lock_if_continue_tag.unlock();
 
         tmp_lock_message_queue.lock();
+        tmp_lock_socket.lock();
 
         tmp_message_to_handle = message_queue.size();
         tmp_message_to_handle = tmp_message_to_handle > MESSAGE_NUM_LIMIT ? tmp_message_to_handle / 2 : tmp_message_to_handle;
@@ -263,7 +264,9 @@ void Message_router::message_consumer(void){
                 }
             }
         }
-
+        tmp_lock_message_queue.unlock();
+        tmp_lock_socket.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 
