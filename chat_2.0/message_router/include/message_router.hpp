@@ -7,15 +7,31 @@
 #include <mutex>
 #include <fstream>
 #include <chrono>
+#include <queue>
+#include <shared_mutex>
+#include <deque>
+#include <thread>
 
 #include <sys/epoll.h>  //for epoll
+#include <sys/types.h>
+#include <sys/socket.h>  //for recv
 #include <unistd.h>  //for close()
 #include <time.h>
 #include <errno.h>
 #include <string.h>
+#include <json/json.h>  //for jsoncpp
 
 #define MAX_SOCKET_NUM 1024
+#define MAX_BUFFER_SIZE 2048
+#define EPOLL_TIMEOUT 500
+#define MESSAGE_NUM_LIMIT 10   //消息队列中的消息数目低于此值时全部处理，否则处理一半
 #define LOG_FILE "message_router.log"
+
+#define SERVER_NAME "server"
+#define MSG_TYPE_ERORR "error"
+#define MSG_TYPE_KEEPALIVE "keep"
+#define MSG_TYPE_GET_USER_LIST "get"
+#define MSG_VALUE_FAILED "-1"
 
 struct socket_item{
     int socket_fd;
@@ -23,30 +39,41 @@ struct socket_item{
     bool is_down = false;
 };
 
+struct message_item{
+    std::string receiver;
+    std::string sender;
+    std::string content;
+    unsigned short int no = 0;
+    unsigned char tried_num = 0;
+};
+
 class Message_router{
 public:
     Message_router();
     ~Message_router();
     static bool add_socket(const char* name, const int& socket_fd);
+    static void message_worker(void);
+    static void message_consumer(void);
     static void cleaner(void);
 
 private:
     char success_tag;
 
     static bool if_continue_tag;
-    static std::mutex if_continue_mtx;
+    static std::shared_mutex if_continue_mtx;
 
     static std::mutex log_file_mtx;
     static std::ofstream log_file;
 
-    static std::mutex epoll_mtx;
+    static std::shared_mutex socket_mtx;
+    static epoll_event epoll_events[MAX_SOCKET_NUM / 2];
     static int epoll_fd;
-
-    static std::mutex socket_map_mtx;
     static std::unordered_map<std::string, struct socket_item> socket_map;
-
-    static std::mutex socket_index_mtx;
     static std::vector<std::string> socket_index;
+    static std::unordered_map<int, std::string> socket_rindex;
+
+    static std::shared_mutex message_queue_mtx;
+    static std::queue<message_item> message_queue;
 
     static time_t tmp_time_t;
     static std::chrono::system_clock::time_point tmp_now_time;
