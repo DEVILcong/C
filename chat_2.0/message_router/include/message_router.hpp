@@ -11,6 +11,7 @@
 #include <shared_mutex>
 #include <deque>
 #include <thread>
+#include <unordered_set>
 
 #include <sys/epoll.h>  //for epoll
 #include <sys/types.h>
@@ -20,6 +21,7 @@
 #include <errno.h>
 #include <string.h>
 #include <json/json.h>  //for jsoncpp
+#include <mysql++/mysql++.h>
 
 #define MAX_SOCKET_NUM 1024
 #define MAX_BUFFER_SIZE 2048
@@ -33,10 +35,12 @@
 #define MSG_TYPE_GET_USER_LIST "get"
 #define MSG_VALUE_FAILED "-1"
 
-struct socket_item{
+struct user_item{
     int socket_fd;
     char count_down = 3;
     bool is_down = false;
+
+    std::unordered_set<std::string> friends;
 };
 
 struct message_item{
@@ -59,6 +63,8 @@ public:
 private:
     char success_tag;
 
+    static mysqlpp::Connection mysql_connection;
+    
     static bool if_continue_tag;
     static std::shared_mutex if_continue_mtx;
 
@@ -68,12 +74,15 @@ private:
     static std::shared_mutex socket_mtx;
     static epoll_event epoll_events[MAX_SOCKET_NUM / 2];
     static int epoll_fd;
-    static std::unordered_map<std::string, struct socket_item> socket_map;
-    static std::vector<std::string> socket_index;
-    static std::unordered_map<int, std::string> socket_rindex;
+    static std::unordered_map<std::string, struct user_item> user_map;
+    static std::vector<std::string> user_index;
+    static std::unordered_map<int, std::string> user_rindex;
 
     static std::shared_mutex message_queue_mtx;
     static std::queue<message_item> message_queue;
+
+    static std::shared_mutex to_be_sent_message_queue_mtx;
+    static std::unordered_multimap<std::string, std::string> to_be_sent_message_queue;
 
     static time_t tmp_time_t;
     static std::chrono::system_clock::time_point tmp_now_time;
