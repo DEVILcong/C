@@ -88,6 +88,7 @@ void Message_router::message_worker(void){
 
     std::string tmp_message_receiver;
     std::string tmp_message_sender;
+    std::string tmp_message_type;
     std::string tmp_message_content;
     unsigned short int tmp_message_no;
     Json::Reader tmp_json_reader;
@@ -143,10 +144,11 @@ void Message_router::message_worker(void){
                         }else{
                             tmp_message_receiver = tmp_json_value["receiver"].asString();
                             tmp_message_sender = tmp_json_value["sender"].asString();
+                            tmp_message_type = tmp_json_value[type].asString();
                             tmp_message_content = std::string(data_buffer);
                             tmp_message_no = (unsigned short int)tmp_json_value["no"].asUInt();
 
-                            message_queue.emplace(tmp_message_receiver, tmp_message_sender, tmp_message_content);
+                            message_queue.emplace(tmp_message_receiver, tmp_message_sender, tmp_message_type, tmp_message_content, tmp_message_no);
                         }
                     }
                 }
@@ -218,7 +220,7 @@ void Message_router::message_consumer(void){
                         tmp_json_value["sender"] = SERVER_NAME;
                         tmp_json_value["type"] = MSG_TYPE_ERORR;
                         tmp_json_value["no"] = tmp_message_item.no;
-                        tmp_json_value["info"] = MSG_VALUE_FAILED;
+                        tmp_json_value["content"] = MSG_VALUE_FAILED;
 
                         tmp_string = tmp_json_writer.write(tmp_json_value);
                         tmp_status = send(user_map[tmp_message_item.sender].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);

@@ -30,6 +30,7 @@
 #define LOG_FILE "message_router.log"
 
 #define SERVER_NAME "server"
+#define MSG_TYPE_NORMAL "msg"
 #define MSG_TYPE_ERORR "error"
 #define MSG_TYPE_KEEPALIVE "keep"
 #define MSG_TYPE_GET_USER_LIST "get"
@@ -46,6 +47,7 @@ struct user_item{
 struct message_item{
     std::string receiver;
     std::string sender;
+    std::string type;
     std::string content;
     unsigned short int no = 0;
     unsigned char tried_num = 0;
