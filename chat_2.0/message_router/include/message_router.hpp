@@ -36,12 +36,17 @@
 #define MSG_TYPE_GET_USER_LIST "get"
 #define MSG_VALUE_FAILED "-1"
 
+#define DB_NAME "chat"
+#define DB_SERVER "127.0.0.1"
+#define DB_USER_NAME "login"
+#define DB_PASSWORD "77777777"
+#define DB_PORT 33060
+#define DB_TABLE "users"
+
 struct user_item{
     int socket_fd;
     char count_down = 3;
     bool is_down = false;
-
-    std::unordered_set<std::string> friends;
 };
 
 struct message_item{
@@ -49,7 +54,6 @@ struct message_item{
     std::string sender;
     std::string type;
     std::string content;
-    unsigned short int no = 0;
     unsigned char tried_num = 0;
 };
 
@@ -77,14 +81,13 @@ private:
     static epoll_event epoll_events[MAX_SOCKET_NUM / 2];
     static int epoll_fd;
     static std::unordered_map<std::string, struct user_item> user_map;
+    static std::vector<std::string> all_users_index;
     static std::vector<std::string> user_index;
     static std::unordered_map<int, std::string> user_rindex;
 
     static std::shared_mutex message_queue_mtx;
     static std::queue<message_item> message_queue;
-
-    static std::shared_mutex to_be_sent_message_queue_mtx;
-    static std::unordered_multimap<std::string, std::string> to_be_sent_message_queue;
+    static std::unordered_map<std::string, std::vector<message_item>> to_be_sent_message_map;
 
     static time_t tmp_time_t;
     static std::chrono::system_clock::time_point tmp_now_time;

@@ -12,14 +12,13 @@ std::shared_mutex Message_router::socket_mtx;
 int Message_router::epoll_fd;
 epoll_event Message_router::epoll_events[MAX_SOCKET_NUM / 2];
 std::unordered_map<std::string, struct user_item> Message_router::user_map;
+std::vector<std::string> Message_router::all_users_index;
 std::vector<std::string> Message_router::user_index;
 std::unordered_map<int, std::string> Message_router::user_rindex;
 
 std::shared_mutex Message_router::message_queue_mtx;
 std::queue<message_item> Message_router::message_queue;
-
-std::shared_mutex Message_router::to_be_sent_message_queue_mtx;
-std::unordered_multimap<std::string, std::string> Message_router::to_be_sent_message_queue;
+std::unordered_map<std::string, std::vector<message_item>> Message_router::to_be_sent_message_map;
 
 time_t Message_router::tmp_time_t;
 std::chrono::system_clock::time_point Message_router::tmp_now_time;
@@ -37,6 +36,27 @@ Message_router::Message_router(){
         return;
     }
 
+    mysqlpp::Connection conn(false);
+    bool status = conn.connect(DB_NAME, DB_SERVER, DB_USER_NAME, DB_PASSWORD, DB_PORT);
+    if(!status){
+        this->success_tag = -3;
+        return;
+    }
+
+    std::string tmp_string = "select name from ";
+    tmp_string += DB_TABLE;
+    mysqlpp::StoreQueryResult tmp_query_result = conn.query(tmp_string.c_str()).store();
+    if(tmp_query_result.num_rows() == 0){
+        this->success_tag = -4;
+        return;
+    }
+
+    for(int i = 0; i < tmp_query_result.num_rows(); ++i){
+        all_users_index.push_back(std::string(tmp_query_result[i]["name"].c_str()));
+    }
+
+    conn.disconnect();
+
     if_continue_tag = true;
     this->success_tag = 0;
 }
@@ -52,7 +72,9 @@ Message_router::~Message_router(){
 bool Message_router::add_socket(const char* name, const int& socket_fd){
     struct epoll_event tmp_event;
     struct user_item tmp_user_item;
+    std::unordered_map<std::string, std::vector<struct message_item>>::iterator tmp_msg_map_iterator;
     std::unique_lock<std::shared_mutex> tmp_lock(socket_mtx);
+    std::unique_lock<std::shared_mutex> tmp_lock_msg(message_queue_mtx);
 
     tmp_event.events = EPOLLIN | EPOLLET;
     tmp_event.data.fd = socket_fd;
@@ -70,9 +92,20 @@ bool Message_router::add_socket(const char* name, const int& socket_fd){
         user_map[std::string(name)] = tmp_user_item;
 
         user_rindex[socket_fd] = std::string(name);
+
+        tmp_msg_map_iterator= to_be_sent_message_map.find(name);
+        if(tmp_msg_map_iterator != to_be_sent_message_map.end()){
+            for(auto tmp_iterator = tmp_msg_map_iterator->second.begin(); tmp_iterator != tmp_msg_map_iterator->second.end(); ++tmp_iterator){
+                message_queue.push(*tmp_iterator);
+            }
+
+            tmp_msg_map_iterator->second.clear();
+            to_be_sent_message_map.erase(name);
+        }
         
         std::unique_lock<std::mutex> tmp_lock2(log_file_mtx);
         log_file << now_time() << "\tInfo: add client " << name << std::endl;
+        log_file.flush();
     }
     return true;
 }
@@ -90,7 +123,6 @@ void Message_router::message_worker(void){
     std::string tmp_message_sender;
     std::string tmp_message_type;
     std::string tmp_message_content;
-    unsigned short int tmp_message_no;
     Json::Reader tmp_json_reader;
     Json::Value tmp_json_value;
 
@@ -144,11 +176,10 @@ void Message_router::message_worker(void){
                         }else{
                             tmp_message_receiver = tmp_json_value["receiver"].asString();
                             tmp_message_sender = tmp_json_value["sender"].asString();
-                            tmp_message_type = tmp_json_value[type].asString();
+                            tmp_message_type = tmp_json_value["type"].asString();
                             tmp_message_content = std::string(data_buffer);
-                            tmp_message_no = (unsigned short int)tmp_json_value["no"].asUInt();
 
-                            message_queue.emplace(tmp_message_receiver, tmp_message_sender, tmp_message_type, tmp_message_content, tmp_message_no);
+                            message_queue.emplace(tmp_message_receiver, tmp_message_sender, tmp_message_type, tmp_message_content);
                         }
                     }
                 }
@@ -180,6 +211,9 @@ void Message_router::message_consumer(void){
     Json::Reader tmp_json_reader;
     Json::Value tmp_json_value;
 
+    std::unordered_map<std::string, struct user_item>::iterator tmp_user_map_iterator;
+    std::unordered_map<std::string, std::vector<struct message_item>>::iterator tmp_msg_map_iterator;
+
     while(1){
         tmp_lock_if_continue_tag.lock();
         if(if_continue_tag == false){
@@ -199,40 +233,45 @@ void Message_router::message_consumer(void){
             message_queue.pop();
 
             if(tmp_message_item.receiver != SERVER_NAME){
-                tmp_status = send(user_map[tmp_message_item.receiver].socket_fd, tmp_message_item.content.c_str(), tmp_message_item.content.length(), 0);
-                ++user_map[tmp_message_item.sender].count_down;
-                if(user_map[tmp_message_item.sender].count_down > 3)
-                    user_map[tmp_message_item.sender].count_down = 3;
+                tmp_user_map_iterator = user_map.find(tmp_message_item.receiver);
 
-                if(tmp_status <= 0){
-                    tmp_lock_log_file.lock();
-                    log_file << now_time() << '\t' << "Warning: send message to " << tmp_message_item.receiver << " failed due to ";
-                    log_file << strerror(errno) << std::endl;
-                    log_file.flush();
-                    tmp_lock_log_file.lock();
+                if(tmp_user_map_iterator != user_map.end()){
+                    tmp_status = send(user_map[tmp_message_item.receiver].socket_fd, tmp_message_item.content.c_str(), tmp_message_item.content.length(), 0);
+                    ++user_map[tmp_message_item.sender].count_down;
+                    if(user_map[tmp_message_item.sender].count_down > 3)
+                        user_map[tmp_message_item.sender].count_down = 3;
 
-                    if(tmp_message_item.tried_num < 3){
-                        ++tmp_message_item.tried_num;
-                        message_queue.push(tmp_message_item);
-                    }else{
-                        tmp_json_value.clear();
-                        tmp_json_value["receiver"] = tmp_message_item.sender;
-                        tmp_json_value["sender"] = SERVER_NAME;
-                        tmp_json_value["type"] = MSG_TYPE_ERORR;
-                        tmp_json_value["no"] = tmp_message_item.no;
-                        tmp_json_value["content"] = MSG_VALUE_FAILED;
+                    if(tmp_status <= 0){
+                        tmp_lock_log_file.lock();
+                        log_file << now_time() << '\t' << "Warning: send message to " << tmp_message_item.receiver << " failed due to ";
+                        log_file << strerror(errno) << std::endl;
+                        log_file.flush();
+                        tmp_lock_log_file.lock();
 
-                        tmp_string = tmp_json_writer.write(tmp_json_value);
-                        tmp_status = send(user_map[tmp_message_item.sender].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+                        if(tmp_message_item.tried_num < 3){
+                            ++tmp_message_item.tried_num;
+                            message_queue.push(tmp_message_item);
+                        }else{
+                            tmp_json_value.clear();
+                            tmp_json_value["receiver"] = tmp_message_item.sender;
+                            tmp_json_value["sender"] = SERVER_NAME;
+                            tmp_json_value["type"] = MSG_TYPE_ERORR;
+                            tmp_json_value["content"] = tmp_message_item.content;
 
-                        if(tmp_status <= 0){
-                            tmp_lock_log_file.lock();
-                            log_file << now_time() << '\t' << "Warning: error info msg can't be sent due to ";
-                            log_file << strerror(errno) << std::endl;
-                            log_file.flush();
-                            tmp_lock_log_file.unlock();
+                            tmp_string = tmp_json_writer.write(tmp_json_value);
+                            tmp_status = send(user_map[tmp_message_item.sender].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+
+                            if(tmp_status <= 0){
+                                tmp_lock_log_file.lock();
+                                log_file << now_time() << '\t' << "Warning: error info msg can't be sent due to ";
+                                log_file << strerror(errno) << std::endl;
+                                log_file.flush();
+                                tmp_lock_log_file.unlock();
+                            }
                         }
                     }
+                }else{
+                    to_be_sent_message_map[tmp_message_item.receiver].push_back(tmp_message_item);
                 }
             }else{
                 tmp_json_value.clear();
@@ -248,9 +287,8 @@ void Message_router::message_consumer(void){
                     tmp_json_value["receiver"] = tmp_message_item.sender;
                     tmp_json_value["sender"] = SERVER_NAME;
                     tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
-                    tmp_json_value["length"] = user_index.size();
-                    for(std::vector<std::string>::iterator i = user_index.begin(); i != user_index.end(); ++i){
-                        tmp_json_value["info"].append(Json::Value(*i));
+                    for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
+                        tmp_json_value["content"].append(Json::Value(*i));
                     }
 
                     tmp_string = tmp_json_writer.write(tmp_json_value);
@@ -319,7 +357,7 @@ void Message_router::cleaner(void){
             tmp_lock_log_file.lock();
             log_file << now_time() << '\t' << "Warning: client " << *i << " closed\n";
             log_file.flush();
-            tmp_lock_log_file.lock();
+            tmp_lock_log_file.unlock();
 
             ++tmp_iterator;
         }
