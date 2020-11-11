@@ -43,9 +43,11 @@
 #define DB_PORT 33060
 #define DB_TABLE "users"
 
+#define CLIENT_ALIVE_TIME_SECONDS 4
+
 struct user_item{
     int socket_fd;
-    char count_down = 4;
+    char count_down = CLIENT_ALIVE_TIME_SECONDS;
     bool is_down = false;
 };
 
