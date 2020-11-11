@@ -6,9 +6,9 @@ std::mutex Message_router::log_file_mtx;
 std::ofstream Message_router::log_file;
 
 bool Message_router::if_continue_tag;
-std::shared_mutex Message_router::if_continue_mtx;
+std::mutex Message_router::if_continue_mtx;
 
-std::shared_mutex Message_router::socket_mtx;
+std::mutex Message_router::socket_mtx;
 int Message_router::epoll_fd;
 epoll_event Message_router::epoll_events[MAX_SOCKET_NUM / 2];
 std::unordered_map<std::string, struct user_item> Message_router::user_map;
@@ -16,9 +16,9 @@ std::vector<std::string> Message_router::all_users_index;
 std::vector<std::string> Message_router::user_index;
 std::unordered_map<int, std::string> Message_router::user_rindex;
 
-std::shared_mutex Message_router::message_queue_mtx;
-std::queue<message_item> Message_router::message_queue;
-std::unordered_map<std::string, std::vector<message_item>> Message_router::to_be_sent_message_map;
+std::mutex Message_router::message_queue_mtx;
+std::queue<std::unordered_map<char, std::string>> Message_router::message_queue;
+std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>> Message_router::to_be_sent_message_map;
 
 time_t Message_router::tmp_time_t;
 std::chrono::system_clock::time_point Message_router::tmp_now_time;
@@ -72,9 +72,9 @@ Message_router::~Message_router(){
 bool Message_router::add_socket(const char* name, const int& socket_fd){
     struct epoll_event tmp_event;
     struct user_item tmp_user_item;
-    std::unordered_map<std::string, std::vector<struct message_item>>::iterator tmp_msg_map_iterator;
-    std::unique_lock<std::shared_mutex> tmp_lock(socket_mtx);
-    std::unique_lock<std::shared_mutex> tmp_lock_msg(message_queue_mtx);
+    std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>>::iterator tmp_msg_map_iterator;
+    std::unique_lock<std::mutex> tmp_lock(socket_mtx);
+    std::unique_lock<std::mutex> tmp_lock_msg(message_queue_mtx);
 
     tmp_event.events = EPOLLIN | EPOLLET;
     tmp_event.data.fd = socket_fd;
@@ -110,11 +110,23 @@ bool Message_router::add_socket(const char* name, const int& socket_fd){
     return true;
 }
 
+char Message_router::get_success_tag(void){
+    return this->success_tag;
+}
+
+void Message_router::set_if_continue_flag(void){
+    std::unique_lock<std::mutex> tmp_lock_if_continue_flag(if_continue_mtx);
+
+    if_continue_tag = false;
+
+    return;
+}
+
 void Message_router::message_worker(void){
-    std::shared_lock<std::shared_mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
-    std::shared_lock<std::shared_mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
-    std::unique_lock<std::shared_mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
     epoll_event* tmp_epoll_event_ptr = nullptr;
     char data_buffer[MAX_BUFFER_SIZE];
     int tmp_status = 0;
@@ -125,6 +137,8 @@ void Message_router::message_worker(void){
     std::string tmp_message_content;
     Json::Reader tmp_json_reader;
     Json::Value tmp_json_value;
+
+    std::unordered_map<char, std::string> tmp_unordered_map;
 
     int ready_num = 0;
 
@@ -179,7 +193,14 @@ void Message_router::message_worker(void){
                             tmp_message_type = tmp_json_value["type"].asString();
                             tmp_message_content = std::string(data_buffer);
 
-                            message_queue.emplace(tmp_message_receiver, tmp_message_sender, tmp_message_type, tmp_message_content);
+                            tmp_unordered_map.clear();
+                            tmp_unordered_map['r'] = tmp_message_receiver;
+                            tmp_unordered_map['s'] = tmp_message_sender;
+                            tmp_unordered_map['t'] = tmp_message_type;
+                            tmp_unordered_map['c'] = tmp_message_content;
+                            tmp_unordered_map['l'] = "0";
+
+                            message_queue.push(tmp_unordered_map);
                         }
                     }
                 }
@@ -195,11 +216,11 @@ void Message_router::message_worker(void){
 }
 
 void Message_router::message_consumer(void){
-    struct message_item tmp_message_item;
-    std::shared_lock<std::shared_mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
+    std::unordered_map<char, std::string> tmp_unordered_map;
+    std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
-    std::unique_lock<std::shared_mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
-    std::unique_lock<std::shared_mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
 
     int tmp_status = 0;
     int tmp_message_to_handle = 0;
@@ -212,7 +233,7 @@ void Message_router::message_consumer(void){
     Json::Value tmp_json_value;
 
     std::unordered_map<std::string, struct user_item>::iterator tmp_user_map_iterator;
-    std::unordered_map<std::string, std::vector<struct message_item>>::iterator tmp_msg_map_iterator;
+    //std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>>::iterator tmp_msg_map_iterator;
 
     while(1){
         tmp_lock_if_continue_tag.lock();
@@ -229,37 +250,37 @@ void Message_router::message_consumer(void){
         tmp_message_to_handle = tmp_message_to_handle > MESSAGE_NUM_LIMIT ? tmp_message_to_handle / 2 : tmp_message_to_handle;
 
         for(int i = 0; i < tmp_message_to_handle; ++i){
-            tmp_message_item = message_queue.front();
+            tmp_unordered_map = message_queue.front();
             message_queue.pop();
 
-            if(tmp_message_item.receiver != SERVER_NAME){
-                tmp_user_map_iterator = user_map.find(tmp_message_item.receiver);
+            if(tmp_unordered_map['r'] != SERVER_NAME){
+                tmp_user_map_iterator = user_map.find(tmp_unordered_map['r']);
 
                 if(tmp_user_map_iterator != user_map.end()){
-                    tmp_status = send(user_map[tmp_message_item.receiver].socket_fd, tmp_message_item.content.c_str(), tmp_message_item.content.length(), 0);
-                    ++user_map[tmp_message_item.sender].count_down;
-                    if(user_map[tmp_message_item.sender].count_down > 3)
-                        user_map[tmp_message_item.sender].count_down = 3;
+                    tmp_status = send(user_map[tmp_unordered_map['r']].socket_fd, tmp_unordered_map['c'].c_str(), tmp_unordered_map['c'].length(), 0);
+                    ++user_map[tmp_unordered_map['s']].count_down;
+                    if(user_map[tmp_unordered_map['s']].count_down > 3)
+                        user_map[tmp_unordered_map['s']].count_down = 3;
 
                     if(tmp_status <= 0){
                         tmp_lock_log_file.lock();
-                        log_file << now_time() << '\t' << "Warning: send message to " << tmp_message_item.receiver << " failed due to ";
+                        log_file << now_time() << '\t' << "Warning: send message to " << tmp_unordered_map['r'] << " failed due to ";
                         log_file << strerror(errno) << std::endl;
                         log_file.flush();
                         tmp_lock_log_file.lock();
 
-                        if(tmp_message_item.tried_num < 3){
-                            ++tmp_message_item.tried_num;
-                            message_queue.push(tmp_message_item);
+                        if(std::stoi(tmp_unordered_map['l']) < 3){
+                            tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
+                            message_queue.push(tmp_unordered_map);
                         }else{
                             tmp_json_value.clear();
-                            tmp_json_value["receiver"] = tmp_message_item.sender;
+                            tmp_json_value["receiver"] = tmp_unordered_map['s'];
                             tmp_json_value["sender"] = SERVER_NAME;
                             tmp_json_value["type"] = MSG_TYPE_ERORR;
-                            tmp_json_value["content"] = tmp_message_item.content;
+                            tmp_json_value["content"] = tmp_unordered_map['c'];
 
                             tmp_string = tmp_json_writer.write(tmp_json_value);
-                            tmp_status = send(user_map[tmp_message_item.sender].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+                            tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
 
                             if(tmp_status <= 0){
                                 tmp_lock_log_file.lock();
@@ -271,20 +292,20 @@ void Message_router::message_consumer(void){
                         }
                     }
                 }else{
-                    to_be_sent_message_map[tmp_message_item.receiver].push_back(tmp_message_item);
+                    to_be_sent_message_map[tmp_unordered_map['r']].push_back(tmp_unordered_map);
                 }
             }else{
-                tmp_json_value.clear();
-                tmp_json_reader.parse(tmp_message_item.content, tmp_json_value);
-                tmp_message_type = tmp_json_value["type"].asString();
+                //tmp_json_value.clear();
+                //tmp_json_reader.parse(tmp_unordered_map['c'], tmp_json_value);
+                tmp_message_type = tmp_unordered_map['t'];
 
                 if(tmp_message_type == MSG_TYPE_KEEPALIVE){
                     ++user_map[tmp_json_value["sender"].asString()].count_down;
-                    if(user_map[tmp_message_item.sender].count_down > 3)
-                        user_map[tmp_message_item.sender].count_down = 3;
+                    if(user_map[tmp_unordered_map['s']].count_down > 3)
+                        user_map[tmp_unordered_map['s']].count_down = 3;
                 }else if(tmp_message_type == MSG_TYPE_GET_USER_LIST){
                     tmp_json_value.clear();
-                    tmp_json_value["receiver"] = tmp_message_item.sender;
+                    tmp_json_value["receiver"] = tmp_unordered_map['s'];
                     tmp_json_value["sender"] = SERVER_NAME;
                     tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
                     for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
@@ -293,15 +314,15 @@ void Message_router::message_consumer(void){
 
                     tmp_string = tmp_json_writer.write(tmp_json_value);
 
-                    tmp_status = send(user_map[tmp_message_item.sender].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+                    tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
                     if(tmp_status <= 0){
-                        if(tmp_message_item.tried_num < 3){
-                            ++tmp_message_item.tried_num;
-                            message_queue.push(tmp_message_item);
+                        if(std::stoi(tmp_unordered_map['l']) < 3){
+                            tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
+                            message_queue.push(tmp_unordered_map);
                         }else{
                             tmp_lock_log_file.lock();
                             log_file << now_time() << '\t' << "Warning: can't send user list to ";
-                            log_file << tmp_message_item.sender << std::endl;
+                            log_file << tmp_unordered_map['s'] << std::endl;
                             log_file.flush();
                             tmp_lock_log_file.unlock();
                         }
@@ -319,8 +340,8 @@ void Message_router::cleaner(void){
     std::vector<std::string> tmp_to_be_closed_vector;
     std::vector<std::vector<std::string>::iterator> tmp_to_be_closed_vector_iterators;
     std::vector<std::vector<std::string>::iterator>::iterator tmp_iterator;
-    std::shared_lock<std::shared_mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
-    std::unique_lock<std::shared_mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
     struct user_item tmp_user_item;
 

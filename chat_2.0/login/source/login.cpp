@@ -1,5 +1,7 @@
 #include "login.hpp"
 
+Message_router* login::mr_ptr;
+
 std::mutex login::continue_tag_mtx;
 volatile bool login::continue_tag;
 int login::listen_socket;
@@ -21,7 +23,7 @@ std::vector<unsigned short int> login::to_be_cleaned_pos;
 std::time_t login::tmp_time_t;
 std::chrono::system_clock::time_point login::tmp_now_time;
 
-login::login(){
+login::login(Message_router* tmp_mr_ptr){
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(listen_socket < 0){
         this->success_tag = -1;
@@ -51,6 +53,8 @@ login::login(){
         this->success_tag = -7;
 
     //std::cout << "Socket: " << listen_socket << std::endl;
+    
+    mr_ptr = tmp_mr_ptr;
     return;
 }
 
@@ -265,6 +269,17 @@ void login::listener(void){
 
                                     char data = 0;
                                     send(tmp_socket, &data, 1, 0);
+
+                                    std::vector<int>::iterator i = socket_catalogue.begin();
+                                    for(i; i != socket_catalogue.end(); ++i){
+                                        if(*i == tmp_socket)
+                                            break;
+                                    }
+                                    socket_catalogue.erase(i);
+                                    sockets.erase(tmp_socket);
+                                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, tmp_socket, NULL);
+
+                                    mr_ptr->add_socket(tmp_login_msg.name, tmp_socket);
                                 }
                             }
                         }

@@ -24,6 +24,8 @@ target_link_libraries(Login  -lmysqlpp
 target_link_libraries(Login  -lpthread
 )
 
+target_link_libraries(Login ${PROJECT_SOURCE_DIR}/libs/libMessageRouter.so)
+
 target_link_libraries(test
     PRIVATE Login
 )

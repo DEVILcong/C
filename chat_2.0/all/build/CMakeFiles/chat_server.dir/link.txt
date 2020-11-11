@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/chat_server.dir/src/main.cpp.o -o chat_server  -Wl,-rpath,/home/liang/Code/C-or-Cpp/chat_2.0/all/libs ../libs/libLogin.so ../libs/libMessageRouter.so -lpthread 
