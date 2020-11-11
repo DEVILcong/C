@@ -18,5 +18,7 @@ target_include_directories(MessageRouter
     PUBLIC ${PROJECT_SOURCE_DIR}/include
 )
 
-target_link_libraries(MessageRouter -lmysqlpp -ljsoncpp)
+target_link_libraries(MessageRouter -lmysqlpp -ljsoncpp -lpthread
+    ${PROJECT_SOURCE_DIR}/libs/libLogin.so
+)
 target_link_libraries(test PRIVATE MessageRouter)

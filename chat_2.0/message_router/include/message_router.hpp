@@ -45,7 +45,7 @@
 
 struct user_item{
     int socket_fd;
-    char count_down = 3;
+    char count_down = 4;
     bool is_down = false;
 };
 
@@ -93,7 +93,7 @@ private:
     static std::vector<std::string> user_index;
     static std::unordered_map<int, std::string> user_rindex;
 
-    static std::mutex message_queue_mtx;
+    //static std::mutex message_queue_mtx;
     static std::queue<std::unordered_map<char, std::string>> message_queue;
     static std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>> to_be_sent_message_map;
 

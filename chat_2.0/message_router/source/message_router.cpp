@@ -16,7 +16,7 @@ std::vector<std::string> Message_router::all_users_index;
 std::vector<std::string> Message_router::user_index;
 std::unordered_map<int, std::string> Message_router::user_rindex;
 
-std::mutex Message_router::message_queue_mtx;
+//std::mutex Message_router::message_queue_mtx;
 std::queue<std::unordered_map<char, std::string>> Message_router::message_queue;
 std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>> Message_router::to_be_sent_message_map;
 
@@ -74,7 +74,7 @@ bool Message_router::add_socket(const char* name, const int& socket_fd){
     struct user_item tmp_user_item;
     std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>>::iterator tmp_msg_map_iterator;
     std::unique_lock<std::mutex> tmp_lock(socket_mtx);
-    std::unique_lock<std::mutex> tmp_lock_msg(message_queue_mtx);
+    //std::unique_lock<std::mutex> tmp_lock_msg(message_queue_mtx);
 
     tmp_event.events = EPOLLIN | EPOLLET;
     tmp_event.data.fd = socket_fd;
@@ -126,7 +126,7 @@ void Message_router::message_worker(void){
     std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
-    std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
+    //std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
     epoll_event* tmp_epoll_event_ptr = nullptr;
     char data_buffer[MAX_BUFFER_SIZE];
     int tmp_status = 0;
@@ -156,23 +156,25 @@ void Message_router::message_worker(void){
         memset(data_buffer, 0, MAX_BUFFER_SIZE);
 
         ready_num = epoll_wait(epoll_fd, epoll_events, MAX_SOCKET_NUM/2, EPOLL_TIMEOUT);
+        std::cout << ready_num << std::endl;
         if(ready_num == -1){
             tmp_lock_log_file.lock();
             log_file << now_time() << '\t' << "Warning: " << strerror(errno) << std::endl;
             log_file.flush();
             tmp_lock_log_file.unlock();
         }else if(ready_num > 0){
-            tmp_lock_message_queue.lock();
+            //tmp_lock_message_queue.lock();
             tmp_epoll_event_ptr = epoll_events;
 
             for(int i = 0; i < ready_num; ++i){
-                if((tmp_epoll_event_ptr->events | EPOLLRDHUP) || (tmp_epoll_event_ptr->events | EPOLLERR) || (tmp_epoll_event_ptr->events | EPOLLHUP)){
+                if((tmp_epoll_event_ptr->events & EPOLLRDHUP) || (tmp_epoll_event_ptr->events & EPOLLERR) || (tmp_epoll_event_ptr->events & EPOLLHUP)){
                     user_map[user_rindex[tmp_epoll_event_ptr->data.fd]].is_down = true;
                 }else{
                     memset(data_buffer, 0, MAX_BUFFER_SIZE);
                     tmp_json_value.clear();
 
                     tmp_status = recv(tmp_epoll_event_ptr->data.fd, data_buffer, MAX_BUFFER_SIZE, 0);
+                    std::cout << "recv msg " << data_buffer << std::endl;
                     if(tmp_status < 0){
                         tmp_lock_log_file.lock();
                         log_file << now_time() << '\t' << "Warning: read socker error, " << strerror(errno) << std::endl;
@@ -207,7 +209,8 @@ void Message_router::message_worker(void){
 
                 ++tmp_epoll_event_ptr;
             }
-            tmp_lock_message_queue.unlock();
+            //tmp_lock_message_queue.unlock();
+            std::cout << "worker end\n";
         }
 
         tmp_lock_socket.unlock();
@@ -220,7 +223,7 @@ void Message_router::message_consumer(void){
     std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
-    std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
+    //std::unique_lock<std::mutex> tmp_lock_message_queue(message_queue_mtx, std::defer_lock);
 
     int tmp_status = 0;
     int tmp_message_to_handle = 0;
@@ -243,7 +246,8 @@ void Message_router::message_consumer(void){
         }
         tmp_lock_if_continue_tag.unlock();
 
-        tmp_lock_message_queue.lock();
+        //tmp_lock_message_queue.lock();
+        std::cout << "consumer start\n";
         tmp_lock_socket.lock();
 
         tmp_message_to_handle = message_queue.size();
@@ -303,7 +307,10 @@ void Message_router::message_consumer(void){
                     ++user_map[tmp_json_value["sender"].asString()].count_down;
                     if(user_map[tmp_unordered_map['s']].count_down > 3)
                         user_map[tmp_unordered_map['s']].count_down = 3;
+
+                    std::cout << "recv keepalive\n";
                 }else if(tmp_message_type == MSG_TYPE_GET_USER_LIST){
+                    std::cout << "recv user list\n";
                     tmp_json_value.clear();
                     tmp_json_value["receiver"] = tmp_unordered_map['s'];
                     tmp_json_value["sender"] = SERVER_NAME;
@@ -315,6 +322,7 @@ void Message_router::message_consumer(void){
                     tmp_string = tmp_json_writer.write(tmp_json_value);
 
                     tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+                    std::cout << tmp_string << std::endl;
                     if(tmp_status <= 0){
                         if(std::stoi(tmp_unordered_map['l']) < 3){
                             tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
@@ -330,7 +338,8 @@ void Message_router::message_consumer(void){
                 }
             }
         }
-        tmp_lock_message_queue.unlock();
+        //tmp_lock_message_queue.unlock();
+        std::cout << "consumer end\n";
         tmp_lock_socket.unlock();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -357,12 +366,15 @@ void Message_router::cleaner(void){
         tmp_to_be_closed_vector.clear();
 
         tmp_lock_socket.lock();
+        std::cout << "cleaner start\n";
 
         for(std::vector<std::string>::iterator i = user_index.begin(); i != user_index.end(); ++i){
             tmp_user_item = user_map[*i];
             if(tmp_user_item.is_down == true || tmp_user_item.count_down < 0){
                 tmp_to_be_closed_vector.push_back(*i);
                 tmp_to_be_closed_vector_iterators.push_back(i);
+            }else{
+                user_map[*i].count_down -= 1;
             }
         }
 
@@ -384,6 +396,7 @@ void Message_router::cleaner(void){
         }
 
         tmp_lock_socket.unlock();
+        std::cout << "cleaner end\n";
         std::this_thread::sleep_for(std::chrono::seconds(3));
     }
 }
