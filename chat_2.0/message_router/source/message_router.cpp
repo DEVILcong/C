@@ -174,7 +174,7 @@ void Message_router::message_worker(void){
                     tmp_json_value.clear();
 
                     tmp_status = recv(tmp_epoll_event_ptr->data.fd, data_buffer, MAX_BUFFER_SIZE, 0);
-                    std::cout << "recv msg " << data_buffer << std::endl;
+                    //std::cout << "recv msg " << data_buffer << std::endl;
                     if(tmp_status < 0){
                         tmp_lock_log_file.lock();
                         log_file << now_time() << '\t' << "Warning: read socker error, " << strerror(errno) << std::endl;
@@ -264,6 +264,8 @@ void Message_router::message_consumer(void){
                 if(user_map.count(tmp_unordered_map['r']) > 0){
 
                     std::cout << tmp_unordered_map['r'] << " to send exist\n";
+                    std::cout << user_map[tmp_unordered_map['r']].count_down << '\t' << user_map[tmp_unordered_map['r']].socket_fd << std::endl;
+
                     tmp_status = send(user_map[tmp_unordered_map['r']].socket_fd, tmp_unordered_map['c'].c_str(), tmp_unordered_map['c'].length(), 0);
                     user_map[tmp_unordered_map['s']].count_down += 1;
                     if(user_map[tmp_unordered_map['s']].count_down > CLIENT_ALIVE_TIME_SECONDS)
@@ -313,7 +315,7 @@ void Message_router::message_consumer(void){
 
                     //std::cout << "recv keepalive " << tmp_json_value["sender"].asString() << '\t' << tmp_json_value["receiver"].asString() << '\n';
                 }else if(tmp_message_type == MSG_TYPE_GET_USER_LIST){
-                    std::cout << "recv user list\n";
+                    //std::cout << "recv user list\n";
                     tmp_json_value.clear();
                     tmp_json_value["receiver"] = tmp_unordered_map['s'];
                     tmp_json_value["sender"] = SERVER_NAME;
@@ -325,7 +327,7 @@ void Message_router::message_consumer(void){
                     tmp_string = tmp_json_writer.write(tmp_json_value);
 
                     tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
-                    std::cout << tmp_string << std::endl;
+                    //std::cout << tmp_string << std::endl;
                     if(tmp_status <= 0){
                         if(std::stoi(tmp_unordered_map['l']) < 3){
                             tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
