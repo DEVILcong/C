@@ -43,11 +43,16 @@
 #define DB_PORT 33060
 #define DB_TABLE "users"
 
-#define CLIENT_ALIVE_TIME_SECONDS 4
+#define CLIENT_ALIVE_TIME_SECONDS 15
+#define CLEANER_START_INTERVAL_SECONDS 5
+
+//消息分界
+#define MESSAGE_SPLIT "\n\n"
+#define MESSAGE_SPLIT_SIZE 2
 
 struct user_item{
     int socket_fd;
-    char count_down = CLIENT_ALIVE_TIME_SECONDS;
+    short int count_down = CLIENT_ALIVE_TIME_SECONDS;
     bool is_down = false;
 };
 

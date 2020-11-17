@@ -93,6 +93,31 @@ bool Message_router::add_socket(const char* name, const int& socket_fd){
 
         user_rindex[socket_fd] = std::string(name);
 
+
+        static Json::Value tmp_json_value;
+        static Json::FastWriter tmp_json_writer;
+        static std::string tmp_string;
+        static std::unordered_map<char, std::string> tmp_unordered_map;
+
+        tmp_unordered_map.clear();
+        tmp_json_value.clear();
+        tmp_json_value["receiver"] = name;
+        tmp_json_value["sender"] = SERVER_NAME;
+        tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
+        for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
+            tmp_json_value["content"].append(Json::Value(*i));
+        }
+
+        tmp_string = tmp_json_writer.write(tmp_json_value);
+
+        tmp_unordered_map['r'] = name;
+        tmp_unordered_map['s'] = SERVER_NAME;
+        tmp_unordered_map['t'] = MSG_TYPE_GET_USER_LIST;
+        tmp_unordered_map['c'] = tmp_string;
+        tmp_unordered_map['l'] = "0";
+
+        message_queue.push(tmp_unordered_map);
+
         tmp_msg_map_iterator= to_be_sent_message_map.find(name);
         if(tmp_msg_map_iterator != to_be_sent_message_map.end()){
             for(auto tmp_iterator = tmp_msg_map_iterator->second.begin(); tmp_iterator != tmp_msg_map_iterator->second.end(); ++tmp_iterator){
@@ -263,10 +288,12 @@ void Message_router::message_consumer(void){
 
                 if(user_map.count(tmp_unordered_map['r']) > 0){
 
-                    std::cout << tmp_unordered_map['r'] << " to send exist\n";
-                    std::cout << user_map[tmp_unordered_map['r']].count_down << '\t' << user_map[tmp_unordered_map['r']].socket_fd << std::endl;
+                    //std::cout << tmp_unordered_map['r'] << " to send exist\n";
+                    //std::cout << user_map[tmp_unordered_map['r']].count_down << '\t' << user_map[tmp_unordered_map['r']].socket_fd << std::endl;
 
                     tmp_status = send(user_map[tmp_unordered_map['r']].socket_fd, tmp_unordered_map['c'].c_str(), tmp_unordered_map['c'].length(), 0);
+                    send(user_map[tmp_unordered_map['r']].socket_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE, 0);
+
                     user_map[tmp_unordered_map['s']].count_down += 1;
                     if(user_map[tmp_unordered_map['s']].count_down > CLIENT_ALIVE_TIME_SECONDS)
                         user_map[tmp_unordered_map['s']].count_down = CLIENT_ALIVE_TIME_SECONDS;
@@ -282,22 +309,8 @@ void Message_router::message_consumer(void){
                             tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
                             message_queue.push(tmp_unordered_map);
                         }else{
-                            tmp_json_value.clear();
-                            tmp_json_value["receiver"] = tmp_unordered_map['s'];
-                            tmp_json_value["sender"] = SERVER_NAME;
-                            tmp_json_value["type"] = MSG_TYPE_ERORR;
-                            tmp_json_value["content"] = tmp_unordered_map['c'];
-
-                            tmp_string = tmp_json_writer.write(tmp_json_value);
-                            tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
-
-                            if(tmp_status <= 0){
-                                tmp_lock_log_file.lock();
-                                log_file << now_time() << '\t' << "Warning: error info msg can't be sent due to ";
-                                log_file << strerror(errno) << std::endl;
-                                log_file.flush();
-                                tmp_lock_log_file.unlock();
-                            }
+                            to_be_sent_message_map[tmp_unordered_map['r']].push_back(tmp_unordered_map);
+                            user_map[tmp_unordered_map['s']].is_down = true;
                         }
                     }
                 }else{
@@ -309,11 +322,11 @@ void Message_router::message_consumer(void){
                 tmp_message_type = tmp_unordered_map['t'];
 
                 if(tmp_message_type == MSG_TYPE_KEEPALIVE){
-                    user_map[tmp_unordered_map['s']].count_down += 1;
+                    ++(user_map[tmp_unordered_map['s']].count_down);
                     if(user_map[tmp_unordered_map['s']].count_down > CLIENT_ALIVE_TIME_SECONDS)
                         user_map[tmp_unordered_map['s']].count_down = CLIENT_ALIVE_TIME_SECONDS;
 
-                    //std::cout << "recv keepalive " << tmp_json_value["sender"].asString() << '\t' << tmp_json_value["receiver"].asString() << '\n';
+                    //std::cout << "recv keepalive " << tmp_unordered_map['s'] << '\t' << user_map[tmp_unordered_map['s']].count_down << '\n';
                 }else if(tmp_message_type == MSG_TYPE_GET_USER_LIST){
                     //std::cout << "recv user list\n";
                     tmp_json_value.clear();
@@ -327,6 +340,8 @@ void Message_router::message_consumer(void){
                     tmp_string = tmp_json_writer.write(tmp_json_value);
 
                     tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
+                    send(user_map[tmp_unordered_map['s']].socket_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE, 0);
+
                     //std::cout << tmp_string << std::endl;
                     if(tmp_status <= 0){
                         if(std::stoi(tmp_unordered_map['l']) < 3){
@@ -402,7 +417,7 @@ void Message_router::cleaner(void){
 
         tmp_lock_socket.unlock();
         //std::cout << "cleaner end\n";
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::seconds(CLEANER_START_INTERVAL_SECONDS));
     }
 }
 
