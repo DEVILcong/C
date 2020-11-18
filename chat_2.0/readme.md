@@ -1,3 +1,5 @@
+注意:本文档pdf版位于./docs文件夹中,推荐看pdf版本,github不能正常显示插入的图片; 流程图等也位于./docs文件夹中。
+
 # 0. 前言
 
 ​	一. 使用C++开发，运行在linux环境下;
@@ -10,7 +12,7 @@
 
 # 1. 服务端结构
 
-![](./docs/server_structure.png)
+![](./docs/图片/server_structure.png)
 
 ## 1.1 登陆验证部分
 
@@ -29,3 +31,27 @@
 ​		message_consumer负责从消息队列中取出消息，根据消息的类型对其进行处理（转发或者回应客户端相应请求）;
 
 ​		cleaner负责定期清理down掉的客户端	
+
+# 2. MySql 配置示例
+
+CREATE DATABASE chat;
+
+CREATE TABLE users(
+
+​	ID int PRIMARY KEY;
+
+​	name varchar(35);
+
+​	password varchar(64)
+
+);
+
+CREATE USER "liang"@"%" IDENTIFIED BY "77777777";
+
+GRANT SELECT ON chat.users TO "liang";
+
+
+
+password部分保存：用户密码使用sha3-256哈希后base64编码  长度44字节
+
+![](/home/liang/Code/C-or-Cpp/chat_2.0/docs/图片/mysql_users.png)
