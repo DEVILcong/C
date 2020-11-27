@@ -1,12 +1,11 @@
 #include "login.hpp"
 
-Message_router* login::mr_ptr;
-
 std::mutex login::continue_tag_mtx;
 volatile bool login::continue_tag;
 int login::listen_socket;
 
-mysqlpp::Connection login::conn(false);
+sqlite3* login::db_sqlite = nullptr;
+sqlite3_stmt* login::db_sqlite_stmt = nullptr;
 
 std::ofstream login::log_file;
 std::mutex login::write_log_mtx;
@@ -23,7 +22,7 @@ std::vector<unsigned short int> login::to_be_cleaned_pos;
 std::time_t login::tmp_time_t;
 std::chrono::system_clock::time_point login::tmp_now_time;
 
-login::login(Message_router* tmp_mr_ptr){
+login::login(void){
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(listen_socket < 0){
         this->success_tag = -1;
@@ -53,8 +52,7 @@ login::login(Message_router* tmp_mr_ptr){
         this->success_tag = -7;
 
     //std::cout << "Socket: " << listen_socket << std::endl;
-    
-    mr_ptr = tmp_mr_ptr;
+
     return;
 }
 
@@ -64,7 +62,7 @@ login::~login(){
 
     close(epoll_fd);
     close(listen_socket);
-    conn.disconnect();
+    db_close();
 }
 
 char login::get_tag(void){
@@ -75,6 +73,65 @@ void login::set_continue_tag(bool tmp_tag){
     continue_tag_mtx.lock();
     continue_tag = false;
     continue_tag_mtx.unlock();
+}
+
+bool login::db_open(){
+    int status = sqlite3_open_v2(SQLITE_FILE_PATH, &db_sqlite, SQLITE_OPEN_READWRITE, NULL);
+
+    if(status != SQLITE_OK){
+        std::cout << "ERROR: can't open sqlite database\n";
+        std::cout << '\t' << sqlite3_errmsg(db_sqlite) << std::endl;
+
+        return false;
+    }
+
+    return true;
+}
+
+bool login::db_init(){
+    int status = sqlite3_prepare_v2(db_sqlite, SQL_TO_EXEC, sizeof(SQL_TO_EXEC), &db_sqlite_stmt, nullptr);
+    
+    if(status != SQLITE_OK){
+        std::cout << "ERROR: can't init sqlite database\n";
+        std::cout << '\t' << sqlite3_errmsg(db_sqlite) << std::endl;
+
+        return false;
+    }
+
+    return true;
+}
+
+bool login::db_if_opened(){
+    return true;
+}
+
+bool login::db_verify(const char* name, const char* passwd){
+    sqlite3_reset(db_sqlite_stmt);
+    sqlite3_bind_text(db_sqlite_stmt, 1, name, strlen(name), NULL);
+
+    int status = sqlite3_step(db_sqlite_stmt);
+    if(status == SQLITE_ROW || status == SQLITE_DONE){
+        const unsigned char* tmp_char_ptr = sqlite3_column_text(db_sqlite_stmt, 0);
+
+        if(tmp_char_ptr == nullptr){
+            return false;
+        }else{
+            status = memcmp(passwd, tmp_char_ptr, sizeof(passwd));
+            if(status == 0){
+                return true;
+            }
+        }
+    }else if(status == SQLITE_ERROR){
+        write_log_mtx.lock();
+        log_file << login::now_time() << '\t' << "ERROR: can't get data from sqlite\n";
+    }
+
+    return false;
+}
+
+void login::db_close(void){
+    sqlite3_finalize(db_sqlite_stmt);
+    sqlite3_close_v2(db_sqlite);
 }
 
 void login::init(){
@@ -105,13 +162,12 @@ void login::init(){
 
     log_file << now_time() << '\t' << "Info: init socket and epoll successfully\n";
 
-    if(!conn.connect(MYSQL_DB, MYSQL_SERVER, MYSQL_USER, MYSQL_PASS, MYSQL_PORT_ME)){
+    if(!(db_open() && db_init())){
         this->success_tag = -8;
-        std::cout << strerror(errno) << std::endl;
         return;
     }
 
-    log_file << now_time() << '\t' << "Info: connect to MySql server successfully\n";
+    log_file << now_time() << '\t' << "Info: open database successfully\n";
 
     this->success_tag = 0;
     return;
@@ -127,16 +183,10 @@ void login::listener(void){
     int tmp_num_2 = 0;
     socklen_t sock_addr_length = sizeof(struct sockaddr);
 
-    std::string to_query = "select password from ";
-    to_query += MYSQL_TABLE;
-    to_query += " where name=\'";
-    mysqlpp::StoreQueryResult tmp_query_result;
-
     struct login_message_t tmp_login_msg;
     unsigned short int msg_length;
 
-    mysqlpp::Query query = conn.query();
-
+    bool tmp_status = false;
 
     while(1){                            //ATTENTION!!!!!!!!
         continue_tag_mtx.lock();
@@ -232,16 +282,14 @@ void login::listener(void){
                         sockets[tmp_socket].time += 1;
                         //sockets[ready_sockets[tmp_num].data.fd].mtx.unlock();
                     }else{
-                        if(!conn.connected()){
+                        if(!db_if_opened()){
                             continue_tag = false;
                             char data = -3;
                             send(tmp_socket, &data, 1, 0);
                         }else{
-                            query.reset();
-                            query << to_query << tmp_login_msg.name << '\'';
-                            tmp_query_result = query.store();
+                            tmp_status = db_verify((const char*)tmp_login_msg.name, (const char*)tmp_login_msg.pass);
 
-                            if(tmp_query_result.num_rows() == 0){
+                            if(!tmp_status){
                                 sockets[tmp_socket].tried_time += 1;
                                 sockets[tmp_socket].time += 1;
                                 
@@ -252,35 +300,21 @@ void login::listener(void){
                                 char data = -1;
                                 send(tmp_socket, &data, 1, 0);
                             }else{
-                                if(tmp_query_result[0]["password"].compare(tmp_login_msg.pass) != 0){
-                                    sockets[tmp_socket].tried_time += 1;
-                                    sockets[tmp_socket].time += 1;
-                                
-                                    write_log_mtx.lock();
-                                    log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized failed\n";
-                                    write_log_mtx.unlock();
+                                write_log_mtx.lock();
+                                log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized successfully\n";
+                                write_log_mtx.unlock();
 
-                                    char data = -2;
-                                    send(tmp_socket, &data, 1, 0);
-                                }else{
-                                    write_log_mtx.lock();
-                                    log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized successfully\n";
-                                    write_log_mtx.unlock();
+                                char data = 0;
+                                send(tmp_socket, &data, 1, 0);
 
-                                    char data = 0;
-                                    send(tmp_socket, &data, 1, 0);
-
-                                    std::vector<int>::iterator i = socket_catalogue.begin();
-                                    for(i; i != socket_catalogue.end(); ++i){
-                                        if(*i == tmp_socket)
-                                            break;
-                                    }
-                                    socket_catalogue.erase(i);
-                                    sockets.erase(tmp_socket);
-                                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, tmp_socket, NULL);
-
-                                    mr_ptr->add_socket(tmp_login_msg.name, tmp_socket);
+                                std::vector<int>::iterator i = socket_catalogue.begin();
+                                for(i; i != socket_catalogue.end(); ++i){
+                                    if(*i == tmp_socket)
+                                        break;
                                 }
+                                socket_catalogue.erase(i);
+                                sockets.erase(tmp_socket);
+                                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, tmp_socket, NULL);
                             }
                         }
                     }

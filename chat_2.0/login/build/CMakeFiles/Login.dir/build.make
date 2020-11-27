@@ -98,7 +98,6 @@ Login_EXTERNAL_OBJECTS =
 
 libLogin.so: CMakeFiles/Login.dir/source/login.cpp.o
 libLogin.so: CMakeFiles/Login.dir/build.make
-libLogin.so: ../libs/libMessageRouter.so
 libLogin.so: CMakeFiles/Login.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/liang/Code/C-or-Cpp/chat_2.0/login/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX shared library libLogin.so"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/Login.dir/link.txt --verbose=$(VERBOSE)

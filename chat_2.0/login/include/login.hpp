@@ -1,14 +1,12 @@
 #ifndef __LOGIN_HPP__
 #define __LOGIN_HPP__
 
-#include "message_router.hpp"
-
 #include <sys/types.h>
 #include <sys/socket.h>  //for socket
 #include <sys/epoll.h>  //for epoll
 #include <errno.h>  //for errno
 
-#include <string.h>  //for memset
+#include <string.h>  //for memset memcpy
 #include <arpa/inet.h>  //for htons
 #include <netinet/in.h>  //for inet_ntoa
 #include <mutex>  //for mutex
@@ -17,8 +15,9 @@
 #include <ctime>
 #include <chrono>  //for time in logfile
 #include <thread>  //for this_thread::sleep_for
-#include <mysql/mysql.h>
-#include <mysql++/mysql++.h>  //for mysql
+#include <iostream>
+
+#include <sqlite3.h>
 #include <string>  //for string
 #include <vector>  //for vector
 #include <unistd.h>  //for close()
@@ -31,12 +30,8 @@
 #define MAX_LISTEN_QUEUE 10
 
 #define LOG_FILE_PATH "login.log"
-#define MYSQL_SERVER "127.0.0.1"
-#define MYSQL_PORT_ME 33060
-#define MYSQL_USER "login"
-#define MYSQL_PASS "77777777"
-#define MYSQL_DB "chat"
-#define MYSQL_TABLE "users"
+#define SQLITE_FILE_PATH "chat_db.sqlite"
+#define SQL_TO_EXEC "select passwd from users where name=?1;"
 
 struct client_socket_t{
    int socket;
@@ -58,7 +53,7 @@ struct login_message_t{
 
 class login{
 public:
-    login(Message_router* tmp_mr_ptr);
+    login(void);
     ~login();
     void init();
     char get_tag(void);
@@ -67,7 +62,6 @@ public:
     static void cleaner(void);
 
 private:
-    static Message_router* mr_ptr;
 
     char success_tag;
     //meanings:
@@ -78,14 +72,21 @@ private:
     //-5: can't start listening on listen socket
     //-6: can't add listen socket to epoll
     //-7: can't open log file
-    //-8: can't connct to mysql server
+    //-8: can't connct to database server
+
+    static sqlite3* db_sqlite;
+    static sqlite3_stmt* db_sqlite_stmt;
+    
+    static bool db_open();
+    static bool db_init();
+    static bool db_if_opened();
+    static bool db_verify(const char* name, const char* passwd);
+    static void db_close();
 
     static std::mutex continue_tag_mtx;
     volatile static bool continue_tag;
 
     static int listen_socket;
-
-    static mysqlpp::Connection conn;
 
     static std::ofstream log_file;
     static std::mutex write_log_mtx;

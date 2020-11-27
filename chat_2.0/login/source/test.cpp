@@ -5,7 +5,7 @@
 int main(void){
     char tmp_tag = 0;
     
-    /*login test;
+    login test;
     tmp_tag = test.get_tag();
     if(tmp_tag < 0){
         std::cout << "failed " << (int)tmp_tag << std::endl;
@@ -27,7 +27,7 @@ int main(void){
     std::thread cleaner(test.cleaner);
 
     listener.join();
-    cleaner.join();*/
+    cleaner.join();
     
     return 0;
 }

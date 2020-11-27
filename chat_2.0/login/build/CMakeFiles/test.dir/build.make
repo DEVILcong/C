@@ -99,7 +99,6 @@ test_EXTERNAL_OBJECTS =
 test: CMakeFiles/test.dir/source/test.cpp.o
 test: CMakeFiles/test.dir/build.make
 test: libLogin.so
-test: ../libs/libMessageRouter.so
 test: CMakeFiles/test.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/liang/Code/C-or-Cpp/chat_2.0/login/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable test"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/test.dir/link.txt --verbose=$(VERBOSE)
