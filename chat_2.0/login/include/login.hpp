@@ -6,6 +6,9 @@
 #include <sys/epoll.h>  //for epoll
 #include <errno.h>  //for errno
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #include <string.h>  //for memset memcpy
 #include <arpa/inet.h>  //for htons
 #include <netinet/in.h>  //for inet_ntoa
@@ -15,6 +18,7 @@
 #include <ctime>
 #include <chrono>  //for time in logfile
 #include <thread>  //for this_thread::sleep_for
+#include <queue>
 #include <iostream>
 
 #include <sqlite3.h>
@@ -23,11 +27,16 @@
 #include <unistd.h>  //for close()
 #include <fcntl.h>  //for fcntl()
 
+#include "local_msg_type.hpp"
+
 #define LISTEN_PORT 22233
 #define MAX_SOCKET_NUM 1024
 #define MAX_READY_SOCKET_NUM MAX_SOCKET_NUM/2
 #define EPOLL_WAIT_TIMEOUT 2000
 #define MAX_LISTEN_QUEUE 10
+
+#define MAX_ALIVE_TIME 10
+#define MAX_TRIED_TIME 3
 
 #define LOG_FILE_PATH "login.log"
 #define SQLITE_FILE_PATH "chat_db.sqlite"
@@ -37,6 +46,7 @@ struct client_socket_t{
    int socket;
    //std::mutex mtx;
    struct in_addr addr;
+   SSL* ssl_fd = nullptr;
    unsigned char time = 0;
    unsigned char tried_time = 0;
    unsigned char is_closed = false;
@@ -53,7 +63,7 @@ struct login_message_t{
 
 class login{
 public:
-    login(void);
+    login(SSL_CTX* tmp_ssl_ctx_fd, std::queue<local_msg_type_t>* tmp_local_msg_queue, std::mutex* tmp_local_msg_queue_mtx);
     ~login();
     void init();
     char get_tag(void);
@@ -62,6 +72,10 @@ public:
     static void cleaner(void);
 
 private:
+
+    static SSL_CTX* ssl_ctx_fd;
+    static std::queue<local_msg_type_t>* local_msg_queue;
+    static std::mutex* local_msg_queue_mtx;
 
     char success_tag;
     //meanings:

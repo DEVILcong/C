@@ -18,7 +18,7 @@ target_include_directories(Login
     PUBLIC ${PROJECT_SOURCE_DIR}/include
 )
 
-target_link_libraries(Login  -lpthread -lsqlite3)
+target_link_libraries(Login  -lpthread -lsqlite3 -lssl -lcrypto)
 
 target_link_libraries(test
     PRIVATE Login

@@ -1,5 +1,9 @@
 #include "login.hpp"
 
+ SSL_CTX* login::ssl_ctx_fd = nullptr;
+std::queue<local_msg_type_t>* login::local_msg_queue = nullptr;
+std::mutex* login::local_msg_queue_mtx = nullptr;
+
 std::mutex login::continue_tag_mtx;
 volatile bool login::continue_tag;
 int login::listen_socket;
@@ -22,7 +26,11 @@ std::vector<unsigned short int> login::to_be_cleaned_pos;
 std::time_t login::tmp_time_t;
 std::chrono::system_clock::time_point login::tmp_now_time;
 
-login::login(void){
+login::login(SSL_CTX* tmp_ssl_ctx_fd, std::queue<local_msg_type_t>* tmp_local_msg_queue = nullptr, std::mutex* tmp_local_msg_queue_mtx = nullptr){
+    ssl_ctx_fd = tmp_ssl_ctx_fd;
+    local_msg_queue = tmp_local_msg_queue;
+    local_msg_queue_mtx = tmp_local_msg_queue_mtx;
+    
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(listen_socket < 0){
         this->success_tag = -1;
@@ -57,8 +65,12 @@ login::login(void){
 }
 
 login::~login(){
-    for(std::vector<int>::iterator it = socket_catalogue.begin(); it != socket_catalogue.end(); ++it)
+    for(std::vector<int>::iterator it = socket_catalogue.begin(); it != socket_catalogue.end(); ++it){
+        SSL_shutdown(sockets[*it].ssl_fd);
+        SSL_free(sockets[*it].ssl_fd);
+        
         close(*it);
+    }
 
     close(epoll_fd);
     close(listen_socket);
@@ -151,7 +163,7 @@ void login::init(){
     }
 
     struct epoll_event ev;
-    ev.events = EPOLLIN | EPOLLET;
+    ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
     ev.data.fd = listen_socket;
     if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_socket, &ev) < 0){
         this->success_tag = -6;
@@ -185,6 +197,10 @@ void login::listener(void){
 
     struct login_message_t tmp_login_msg;
     unsigned short int msg_length;
+    char openssl_err_buf[30];
+
+    int status = 0;
+    SSL* tmp_ssl_fd = nullptr;
 
     bool tmp_status = false;
 
@@ -201,6 +217,7 @@ void login::listener(void){
         memset(ready_sockets, 0, MAX_READY_SOCKET_NUM*sizeof(epoll_event));
         tmp_socket_num = epoll_wait(epoll_fd, ready_sockets, MAX_READY_SOCKET_NUM, EPOLL_WAIT_TIMEOUT);
         
+        std::cout << tmp_socket_num << std::endl;
         if(tmp_socket_num == -1){
             write_log_mtx.lock();
             log_file << now_time() << '\t' << "Warning: epoll_wait return -1, errno is " << errno << std::endl;
@@ -224,6 +241,7 @@ void login::listener(void){
                     write_log_mtx.unlock();
                     
                     sockets[tmp_socket].is_closed = true;
+                    continue;
                 }
                 
                 if(ready_sockets[tmp_num].data.fd == listen_socket){  //信息来自监听socket
@@ -232,47 +250,77 @@ void login::listener(void){
                         tmp_socket = accept(listen_socket, (sockaddr*)&tmp_sockaddr, &sock_addr_length);
                         if(tmp_socket == -1 )
                             break;
-                        
-                        write_log_mtx.lock();
-                        log_file << now_time() << '\t' << "Info: new connection " << inet_ntoa(tmp_sockaddr.sin_addr) << std::endl;
-                        write_log_mtx.unlock();
 
-                        tmp_event.events = EPOLLIN | EPOLLET;
-                        tmp_event.data.fd = tmp_socket;
-                        if(fcntl(tmp_socket, F_SETFL, fcntl(tmp_socket, F_GETFL, 0) | O_NONBLOCK) == -1){
+                        tmp_ssl_fd = SSL_new(ssl_ctx_fd);
+                        SSL_set_fd(tmp_ssl_fd, tmp_socket);
+                        status = SSL_accept(tmp_ssl_fd);
+
+                        if(status != 1){
+                            memset(openssl_err_buf, 0, sizeof(openssl_err_buf));
                             write_log_mtx.lock();
-                            log_file << now_time() << '\t' << "Warning: can't add socket to list, errno is " << errno << std::endl;
+                            log_file << now_time() << '\t' << "ERROR: connection from " << inet_ntoa(tmp_sockaddr.sin_addr);
+                            log_file << " can't establish SSL connect\n";
+                            log_file << '\t' << ERR_error_string(SSL_get_error(tmp_ssl_fd, status), openssl_err_buf) << std::endl;
                             write_log_mtx.unlock();
-                            close(tmp_socket);
-                            continue;
-                        }
 
-                        if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tmp_socket, &tmp_event) == -1){
+                            ERR_print_errors_fp(stderr);
+
+                            SSL_shutdown(tmp_ssl_fd);
+                            SSL_free(tmp_ssl_fd);
+                            close(tmp_socket);
+                        }else{
                             write_log_mtx.lock();
-                            log_file << now_time() << '\t' << "Warning: can't add socket to list, errno is " << errno << std::endl;
+                            log_file << now_time() << '\t' << "Info: new connection " << inet_ntoa(tmp_sockaddr.sin_addr) << std::endl;
                             write_log_mtx.unlock();
-                            close(tmp_socket);
-                            continue;
+
+                            tmp_event.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
+                            tmp_event.data.fd = tmp_socket;
+                            if(fcntl(tmp_socket, F_SETFL, fcntl(tmp_socket, F_GETFL, 0) | O_NONBLOCK) == -1){
+                                write_log_mtx.lock();
+                                log_file << now_time() << '\t' << "Warning: can't add socket to list, errno is " << errno << std::endl;
+                                write_log_mtx.unlock();
+                                close(tmp_socket);
+                                continue;
+                            }
+
+                            if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tmp_socket, &tmp_event) == -1){
+                                write_log_mtx.lock();
+                                log_file << now_time() << '\t' << "Warning: can't add socket to list, errno is " << errno << std::endl;
+                                write_log_mtx.unlock();
+                                close(tmp_socket);
+                                continue;
+                            }
+
+                            memset(&tmp_client_socket, 0, sizeof(client_socket_t));
+                            tmp_client_socket.socket = tmp_socket;
+                            tmp_client_socket.ssl_fd = tmp_ssl_fd;
+
+                            socket_catalogue.insert(socket_catalogue.end(), tmp_socket);
+                            sockets.emplace(tmp_socket, tmp_client_socket);
+                            sockets[tmp_socket].addr.s_addr = tmp_sockaddr.sin_addr.s_addr;
+
+                            write_log_mtx.lock();
+                            log_file << now_time() << '\t' << "Info: add connection successfully\n";
+                            write_log_mtx.unlock();
                         }
-
-                        memset(&tmp_client_socket, 0, sizeof(client_socket_t));
-                        tmp_client_socket.socket = tmp_socket;
-
-                        socket_catalogue.insert(socket_catalogue.end(), tmp_socket);
-                        sockets.emplace(tmp_socket, tmp_client_socket);
-                        sockets[tmp_socket].addr.s_addr = tmp_sockaddr.sin_addr.s_addr;
-
-                        write_log_mtx.lock();
-                        log_file << now_time() << '\t' << "Info: add connection successfully\n";
-                        write_log_mtx.unlock();
 
                     }
                 }else{  //信息来自连接的客户端socket
                     tmp_socket = ready_sockets[tmp_num].data.fd;
                     memset(&tmp_login_msg, 0, sizeof(login_message_t));
 
-                    msg_length = recv(tmp_socket, &tmp_login_msg, sizeof(login_message_t), 0); 
-                    if(-1 == msg_length || tmp_login_msg.type != 'L'){
+                    msg_length = SSL_read(sockets[tmp_socket].ssl_fd, &tmp_login_msg, sizeof(login_message_t));
+                    // for(int i = 0; i < 5 && msg_length <= 0; ++i){
+                    //     msg_length = SSL_get_error(sockets[tmp_socket].ssl_fd, msg_length);
+                    //     if(msg_length == SSL_ERROR_WANT_READ || msg_length == SSL_ERROR_WANT_WRITE){
+                    //         msg_length = SSL_read(sockets[tmp_socket].ssl_fd, &tmp_login_msg, sizeof(login_message_t));
+                    //         continue;
+                    //     }else{
+                    //         break;
+                    //     }
+                    // }
+
+                    if(msg_length <= 0 || tmp_login_msg.type != 'L'){
                         write_log_mtx.lock();
                         log_file << now_time() << '\t' << "Warning: failed to receive valid msg from " << inet_ntoa(sockets[tmp_socket].addr) << std::endl;
                         write_log_mtx.unlock();
@@ -298,14 +346,14 @@ void login::listener(void){
                                 write_log_mtx.unlock();
 
                                 char data = -1;
-                                send(tmp_socket, &data, 1, 0);
+                                SSL_write(sockets[tmp_socket].ssl_fd, &data, 1);
                             }else{
                                 write_log_mtx.lock();
                                 log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized successfully\n";
                                 write_log_mtx.unlock();
 
                                 char data = 0;
-                                send(tmp_socket, &data, 1, 0);
+                                SSL_write(sockets[tmp_socket].ssl_fd, &data, 1);
 
                                 std::vector<int>::iterator i = socket_catalogue.begin();
                                 for(i; i != socket_catalogue.end(); ++i){
@@ -349,7 +397,7 @@ void login::cleaner(void){
 
         for(order_tmp = 0; order_tmp < socket_catalogue.size(); ++order_tmp){
             socket_tmp = socket_catalogue[order_tmp];
-            if(sockets[socket_tmp].time > 5 || sockets[socket_tmp].tried_time > 3 || sockets[socket_tmp].is_closed == true){
+            if(sockets[socket_tmp].time > MAX_ALIVE_TIME || sockets[socket_tmp].tried_time > MAX_TRIED_TIME || sockets[socket_tmp].is_closed == true){
                 to_be_cleaned_val.push_back(socket_tmp);
                 to_be_cleaned_pos.push_back(order_tmp);
             }
@@ -362,6 +410,9 @@ void login::cleaner(void){
             write_log_mtx.lock();
             log_file << now_time() << '\t' << "Warning: " << inet_ntoa(sockets[socket_tmp].addr) << " closed\n";
             write_log_mtx.unlock();
+
+            SSL_shutdown(sockets[socket_tmp].ssl_fd);
+            SSL_free(sockets[socket_tmp].ssl_fd);
 
             socket_catalogue.erase(socket_catalogue.begin() + to_be_cleaned_pos[order_tmp] - 1);
             sockets.erase(socket_tmp);
