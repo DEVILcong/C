@@ -1,1 +1,0 @@
-/usr/bin/c++     CMakeFiles/process_msg.dir/source/test.cpp.o  -o process_msg  -Wl,-rpath,/home/liang/Code/cORcpp/chat/common/process_msg/build:/home/liang/Code/cORcpp/chat/common/process_msg/libs libProcessMsg.so /usr/lib64/libssl.so /usr/lib64/libcrypto.so ../libs/libMakeRSAKey.so 

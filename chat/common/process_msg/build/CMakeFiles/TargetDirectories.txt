@@ -1,4 +1,0 @@
-/home/liang/Code/cORcpp/chat/common/process_msg/build/CMakeFiles/rebuild_cache.dir
-/home/liang/Code/cORcpp/chat/common/process_msg/build/CMakeFiles/edit_cache.dir
-/home/liang/Code/cORcpp/chat/common/process_msg/build/CMakeFiles/ProcessMsg.dir
-/home/liang/Code/cORcpp/chat/common/process_msg/build/CMakeFiles/process_msg.dir

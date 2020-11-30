@@ -23,17 +23,26 @@ ProcessMsg::ProcessMsg(unsigned char* key, unsigned char* iv){
     this->init();
 
     this->aes_key = new unsigned char[AES_256_KEY_LEN];
+    this->aes_key_tmp = new unsigned char[AES_256_KEY_LEN];
+
     this->aes_iv = new unsigned char[AES_256_IV_LEN];
+    this->aes_iv_tmp = new unsigned char[AES_256_IV_LEN];
 
     memcpy(this->aes_key, key, AES_256_KEY_LEN);
+    memcpy(this->aes_key_tmp, key, AES_256_KEY_LEN);
+
     memcpy(this->aes_iv, iv, AES_256_IV_LEN);
+    memcpy(this->aes_iv_tmp, iv, AES_256_IV_LEN);
 
     this->evp_cipher_ctx = EVP_CIPHER_CTX_new();
 }
 
 ProcessMsg::~ProcessMsg(){
-    if(this->bio_base64 != nullptr)
-        BIO_free_all(this->bio_base64);
+    // if(this->bio_base64_decode != nullptr)
+    //     BIO_free_all(this->bio_base64_decode);
+
+    if(this->bio_base64_encode != nullptr)
+        BIO_free_all(this->bio_base64_encode);
 
     if(this->evp_pkey_ctx != nullptr)
         EVP_PKEY_CTX_free(this->evp_pkey_ctx);
@@ -46,6 +55,12 @@ ProcessMsg::~ProcessMsg(){
 
     if(this->aes_iv != nullptr)
         delete [] this->aes_iv;
+
+    if(this->aes_key_tmp != nullptr)
+        delete [] this->aes_key_tmp;
+
+    if(this->aes_iv_tmp != nullptr)
+        delete [] this->aes_iv_tmp;
 }
 
 void ProcessMsg::init(void){
@@ -57,7 +72,7 @@ void ProcessMsg::init(void){
 
     this->buffer = std::unique_ptr<unsigned char, deleter>(nullptr, this->d);
 
-    this->bio_base64 = BIO_new(BIO_f_base64());
+    this->bio_base64_encode = BIO_new(BIO_f_base64());
 
     this->evp_pkey_ctx = nullptr;
 
@@ -67,6 +82,9 @@ void ProcessMsg::init(void){
 
     this->aes_key = nullptr;
     this->aes_iv = nullptr;
+
+    this->aes_key_tmp = nullptr;
+    this->aes_iv_tmp = nullptr;
 
     return;
 }
@@ -92,12 +110,13 @@ void ProcessMsg::digest(const char* str, size_t length){
 }
 
 void ProcessMsg::base64_encode(const char* str, size_t length){
+    
     BUF_MEM* buf = nullptr;
 
     BIO* tmp_bio = BIO_new(BIO_s_mem());
-    this->bio_base64 = BIO_push(this->bio_base64, tmp_bio);
+    this->bio_base64_encode = BIO_push(this->bio_base64_encode, tmp_bio);
 
-    int status = BIO_write(this->bio_base64, str, length);
+    int status = BIO_write(this->bio_base64_encode, str, length);
 
     if(status <= 0){
 #ifndef _OUTPUT_
@@ -107,9 +126,9 @@ void ProcessMsg::base64_encode(const char* str, size_t length){
         return;
     }
 
-    BIO_flush(this->bio_base64);
+    BIO_flush(this->bio_base64_encode);
 
-    BIO_get_mem_ptr(this->bio_base64, &buf);
+    BIO_get_mem_ptr(this->bio_base64_encode, &buf);
     if(buf == nullptr){
 #ifdef _OUTPUT_
         std::cout << "ERROR: failed when obtain buf ptr during base64 encode" << std::endl;
@@ -135,7 +154,7 @@ void ProcessMsg::base64_encode(const char* str, size_t length){
 
     BIO_pop(tmp_bio);
     BIO_free(tmp_bio);
-    BIO_reset(this->bio_base64);
+    BIO_reset(this->bio_base64_encode);
      
     this->isValid = true;
     return;
@@ -144,16 +163,18 @@ void ProcessMsg::base64_encode(const char* str, size_t length){
 
 void ProcessMsg::base64_decode(const char* str, size_t length){
 
+    this->bio_base64_decode = BIO_new(BIO_f_base64());
+    
     if(length <= 65)
-        BIO_set_flags(this->bio_base64, BIO_FLAGS_BASE64_NO_NL);  //base64串中是否有换行符
+        BIO_set_flags(this->bio_base64_decode, BIO_FLAGS_BASE64_NO_NL);  //base64串中是否有换行符
 
     BIO* tmp_bio = BIO_new_mem_buf(str, length);
-    this->bio_base64 = BIO_push(this->bio_base64, tmp_bio);
+    this->bio_base64_decode = BIO_push(this->bio_base64_decode, tmp_bio);
+    
+    char tmp_buf[length];
+    memset(tmp_buf, 0, length);
 
-    this->buffer.reset(new unsigned char[length]);
-    memset(this->buffer.get(), 0, strlen(str));
-
-    int status = BIO_read(this->bio_base64, this->buffer.get(), length);
+    int status = BIO_read(this->bio_base64_decode, tmp_buf, length);
 
     if(status < 0){
 #ifdef _OUTPUT_
@@ -163,15 +184,18 @@ void ProcessMsg::base64_decode(const char* str, size_t length){
         return;
     }
 
+    this->buffer.reset(new unsigned char[status]);
+    memcpy(this->buffer.get(), tmp_buf, status);
     this->buffer_length = status;
     this->isValid = true;
 
-    BIO_pop(tmp_bio);
-    BIO_free(tmp_bio);
-    BIO_clear_flags(this->bio_base64, BIO_FLAGS_BASE64_NO_NL);
-    BIO_reset(this->bio_base64);
-    //std::cout << this->buffer.get() << std::endl;
+    // BIO_pop(tmp_bio);
+    // BIO_free(tmp_bio);
 
+    // if(length <= 65)
+    //     BIO_clear_flags(this->bio_base64_decode, BIO_FLAGS_BASE64_NO_NL);
+
+    BIO_free_all(this->bio_base64_decode);
 }
 
 void ProcessMsg::RSA_encrypt(const char* str, size_t length){
@@ -277,6 +301,14 @@ void ProcessMsg::RSA_decrypt(const char* str, size_t length){
     return;
 }
 
+void ProcessMsg::AES_256_change_key(unsigned char* key, unsigned char* iv){
+    memcpy(this->aes_key, key, AES_256_KEY_LEN);
+    memcpy(this->aes_key_tmp, key, AES_256_KEY_LEN);
+
+    memcpy(this->aes_iv, iv, AES_256_IV_LEN);
+    memcpy(this->aes_iv_tmp, iv, AES_256_IV_LEN);
+}
+
 void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
     int outlen = 0;
 
@@ -295,8 +327,11 @@ void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
         data_ptr = (unsigned char*)str;
         data_length = length;
     }
+
+    memcpy(this->aes_key_tmp, this->aes_key, AES_256_KEY_LEN);
+    memcpy(this->aes_iv_tmp, this->aes_iv, AES_256_IV_LEN);
     
-    int status = EVP_CipherInit_ex(this->evp_cipher_ctx, EVP_CIPHER, NULL, this->aes_key, this->aes_iv, enc);
+    int status = EVP_CipherInit_ex(this->evp_cipher_ctx, EVP_CIPHER, NULL, this->aes_key_tmp, this->aes_iv_tmp, enc);
     if(1 != status){
 #ifdef _OUTPUT_
         std::cout << "ERROR: failed to init when AES-256 process" << std::endl;
@@ -326,14 +361,14 @@ void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
         std::cout << final_data_length << std::endl;
         std::cout << "****************************\n";
     }*/
-
+    
     this->buffer.reset(buf_ptr);
     this->buffer_length = final_data_length;
 
+    EVP_CIPHER_CTX_reset(this->evp_cipher_ctx);
+
     if(1 == enc)
         this->base64_encode((const char*)(this->buffer.get()), this->buffer_length);
-
-    EVP_CIPHER_CTX_reset(this->evp_cipher_ctx);
 }
 
 unsigned char* ProcessMsg::get_result(void){

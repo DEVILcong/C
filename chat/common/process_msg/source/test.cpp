@@ -3,36 +3,63 @@
 
 #include <fstream>
 
+#define AES_256_KEY_SIZE 32
+#define AES_256_IV_SIZE 16
+
+struct aes_key_item_t{
+    unsigned char key[AES_256_KEY_SIZE];
+    unsigned char iv[AES_256_IV_SIZE];
+};
+
 int main(int argc, char** argv){
-    /*unsigned char* key = new unsigned char[32];
-    unsigned char* iv = new unsigned char[16];
+    struct aes_key_item_t server_keys[30];
+    struct aes_key_item_t client_keys[6];
 
-    std::ifstream in;
-    in.open("aes_key", std::ifstream::in);
-    in.read((char*)key, 32);
-    in.read((char*)iv, 16);
-    in.close();*/
+    unsigned char tmp_buffer[35];
+    int tmp_length = 0;
 
-    MakeRSAKey make;
-    make.makeKey();
+    std::ifstream in1("server_keys", std::ifstream::in | std::ifstream::binary);
+    std::ifstream in2("client_keys", std::ifstream::in | std::ifstream::binary);
 
-    EVP_PKEY* key = make.getKey();
+    in1.read((char*)&server_keys, 30 * sizeof(struct aes_key_item_t));
+    in2.read((char*)&client_keys, 6 * sizeof(struct aes_key_item_t));
 
-    ProcessMsg msg(key);
+    ProcessMsg process(server_keys[5].key, server_keys[5].iv);
+    //process.base64_decode("0hA9SL8E3u/aPUhUK+Aa5w==", 25);
+    //std::cout << process.get_result() << std::endl;
 
-    msg.RSA_encrypt("Hello, My name is Liang Yuecong. I live in Cuijiayu, ShanDong Province. I like learning English very much. My favorite color is black, it's cool. My favorite food is tomato, it's just tasty.", 100);
-    size_t length = msg.get_result_length();
-    unsigned char* buffer = new unsigned char[length];
-    memcpy(buffer, msg.get_result(), length);
-    std::cout << length << "\n" << buffer << std::endl;
+    for(int i = 0; i < 30; ++i){
+        memset(tmp_buffer, 0, 35);
 
-    msg.RSA_decrypt((char*)buffer, length);
-    std::cout << msg.get_result_length() << "\t" << msg.get_result() << std::endl;
+        process.AES_256_change_key(server_keys[i].key, server_keys[i].iv);
+        process.AES_256_process("liangyuecong", 12, 1);
 
+        memcpy(&tmp_buffer, process.get_result(), process.get_result_length());
+        tmp_length = process.get_result_length();
 
+        std::cout << tmp_buffer << '\n';
 
-    /*delete [] key;
-    delete [] iv;
-    delete [] buffer;*/
+        process.AES_256_process((const char*)tmp_buffer, tmp_length, 0);
+        std::cout << process.get_result() << std::endl;
+
+        std::cout << "**********************\n";
+    }
+
+    std::cout << "-------------------------------------------------------\n";
+    for(int i = 0; i < 5; ++i){
+        process.AES_256_change_key(client_keys[i].key, client_keys[i].iv);
+        process.AES_256_process("liangyuecong", 12, 1);
+
+        memcpy(&tmp_buffer, process.get_result(), process.get_result_length());
+        tmp_length = process.get_result_length();
+
+        std::cout << tmp_buffer << '\t';
+
+        process.AES_256_process((const char*)tmp_buffer, tmp_length-1, 0);
+        std::cout << process.get_result() << std::endl;
+    }
+
+    in1.close();
+    in2.close();
     return 0;
 }

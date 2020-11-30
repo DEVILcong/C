@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC   -shared -Wl,-soname,libReadRSAKey.so -o libReadRSAKey.so CMakeFiles/ReadRSAKey.dir/source/read_rsaKey.cpp.o  /usr/lib64/libssl.so /usr/lib64/libcrypto.so 

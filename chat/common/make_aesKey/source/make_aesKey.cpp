@@ -15,6 +15,9 @@ MakeAESKey::~MakeAESKey(){
 }
 
 void MakeAESKey::makeKey(void){
+    memset(this->key, 0, KEY_SIZE);
+    memset(this->iv, 0, IV_SIZE);
+
     short int status = 0;
     status = BN_rand(this->bn, KEY_SIZE * 8, RAND_TOP, RAND_BOTTEM);
     if(1 != status){

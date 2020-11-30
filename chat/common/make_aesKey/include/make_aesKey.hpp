@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <openssl/bn.h>
+#include <cstring>
 
 #define _OUTPUT_
 
