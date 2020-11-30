@@ -171,10 +171,10 @@ void ProcessMsg::base64_decode(const char* str, size_t length){
     BIO* tmp_bio = BIO_new_mem_buf(str, length);
     this->bio_base64_decode = BIO_push(this->bio_base64_decode, tmp_bio);
     
-    char tmp_buf[length];
-    memset(tmp_buf, 0, length);
+    this->buffer.reset(new unsigned char[length]);
+    memset(this->buffer.get(), 0, length);
 
-    int status = BIO_read(this->bio_base64_decode, tmp_buf, length);
+    int status = BIO_read(this->bio_base64_decode, this->buffer.get(), length);
 
     if(status < 0){
 #ifdef _OUTPUT_
@@ -184,8 +184,6 @@ void ProcessMsg::base64_decode(const char* str, size_t length){
         return;
     }
 
-    this->buffer.reset(new unsigned char[status]);
-    memcpy(this->buffer.get(), tmp_buf, status);
     this->buffer_length = status;
     this->isValid = true;
 
