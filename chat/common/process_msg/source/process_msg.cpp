@@ -377,8 +377,8 @@ size_t ProcessMsg::get_result_length(void){
     return this->buffer_length;
 }
 
-void ProcessMsg::test(void){
-
+bool ProcessMsg::ifValid(void){
+    return this->isValid;
 }
 
 void ProcessMsg::print_hex(unsigned char* str, unsigned int length){

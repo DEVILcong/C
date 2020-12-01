@@ -27,7 +27,6 @@ if(OPENSSL_FOUND)
     target_link_libraries(ProcessMsg
         PUBLIC OpenSSL::SSL
         PUBLIC OpenSSL::Crypto
-        PUBLIC ${PROJECT_SOURCE_DIR}/libs/libMakeRSAKey.so
     )
 else()
     message(FATAL_ERROR "Can't find OpenSSL")

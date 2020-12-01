@@ -1,6 +1,8 @@
 #include "login.hpp"
 
- SSL_CTX* login::ssl_ctx_fd = nullptr;
+struct aes_key_item_t login::server_keys[AES_SERVER_KEY_NUM];
+
+SSL_CTX* login::ssl_ctx_fd = nullptr;
 std::queue<local_msg_type_t>* login::local_msg_queue = nullptr;
 std::mutex* login::local_msg_queue_mtx = nullptr;
 
@@ -181,6 +183,20 @@ void login::init(){
 
     log_file << now_time() << '\t' << "Info: open database successfully\n";
 
+    std::ifstream server_keys_file(AES_SERVER_KEY_NAME, std::ifstream::in | std::ifstream::binary);
+    if(!server_keys_file.is_open()){
+        std::cout << "ERROR: can't open server key file\n";
+        this->success_tag = -9;
+        return;
+    }
+    server_keys_file.read((char*)&server_keys, AES_SERVER_KEY_NUM*sizeof(struct aes_key_item_t));
+    if(!server_keys_file){
+        std::cout << "ERROR: can't read from server key file\n";
+        this->success_tag = -10;
+        return;
+    }
+    std::cout << "Info: get server keys successfuly\n";
+
     this->success_tag = 0;
     return;
 }
@@ -195,7 +211,13 @@ void login::listener(void){
     int tmp_num_2 = 0;
     socklen_t sock_addr_length = sizeof(struct sockaddr);
 
-    struct login_message_t tmp_login_msg;
+    Json::Reader tmp_json_reader;
+    Json::Value tmp_json_value;
+    char recv_buf[MAX_RECV_BUF_LENGTH];
+    std::string tmp_string_recv_all_msg;
+    std::string tmp_string_recv_part_msg;
+    ProcessMsg tmp_process_msg(server_keys[0].key, server_keys[0].iv);
+
     unsigned short int msg_length;
     char openssl_err_buf[30];
 
@@ -217,7 +239,6 @@ void login::listener(void){
         memset(ready_sockets, 0, MAX_READY_SOCKET_NUM*sizeof(epoll_event));
         tmp_socket_num = epoll_wait(epoll_fd, ready_sockets, MAX_READY_SOCKET_NUM, EPOLL_WAIT_TIMEOUT);
         
-        std::cout << tmp_socket_num << std::endl;
         if(tmp_socket_num == -1){
             write_log_mtx.lock();
             log_file << now_time() << '\t' << "Warning: epoll_wait return -1, errno is " << errno << std::endl;
@@ -307,9 +328,9 @@ void login::listener(void){
                     }
                 }else{  //信息来自连接的客户端socket
                     tmp_socket = ready_sockets[tmp_num].data.fd;
-                    memset(&tmp_login_msg, 0, sizeof(login_message_t));
+                    memset(recv_buf, 0, MAX_RECV_BUF_LENGTH);
 
-                    msg_length = SSL_read(sockets[tmp_socket].ssl_fd, &tmp_login_msg, sizeof(login_message_t));
+                    msg_length = SSL_read(sockets[tmp_socket].ssl_fd, recv_buf, MAX_RECV_BUF_LENGTH);
                     // for(int i = 0; i < 5 && msg_length <= 0; ++i){
                     //     msg_length = SSL_get_error(sockets[tmp_socket].ssl_fd, msg_length);
                     //     if(msg_length == SSL_ERROR_WANT_READ || msg_length == SSL_ERROR_WANT_WRITE){
@@ -319,8 +340,8 @@ void login::listener(void){
                     //         break;
                     //     }
                     // }
-
-                    if(msg_length <= 0 || tmp_login_msg.type != 'L'){
+                    
+                    if(msg_length <= 0 || !tmp_json_reader.parse(recv_buf, recv_buf + msg_length, tmp_json_value)){
                         write_log_mtx.lock();
                         log_file << now_time() << '\t' << "Warning: failed to receive valid msg from " << inet_ntoa(sockets[tmp_socket].addr) << std::endl;
                         write_log_mtx.unlock();
@@ -329,27 +350,65 @@ void login::listener(void){
                         sockets[tmp_socket].tried_time += 1;
                         sockets[tmp_socket].time += 1;
                         //sockets[ready_sockets[tmp_num].data.fd].mtx.unlock();
+
+                        continue;
                     }else{
+                        tmp_num_2 = tmp_json_value["value"].asInt();
+                        tmp_string_recv_all_msg = tmp_json_value["info"].asString();
+
+                        tmp_process_msg.AES_256_change_key(server_keys[tmp_num_2].key, server_keys[tmp_num_2].iv);
+                        tmp_process_msg.AES_256_process(tmp_string_recv_all_msg.data(), tmp_string_recv_all_msg.length(), 0);
+                        if(!tmp_process_msg.ifValid()){
+                            write_log_mtx.lock();
+                            log_file << now_time() << '\t' << "Warning: failed to decrypt msg from " << inet_ntoa(sockets[tmp_socket].addr) << std::endl;
+                            write_log_mtx.unlock();
+
+                            //sockets[ready_sockets[tmp_num].data.fd].mtx.lock();
+                            sockets[tmp_socket].tried_time += 1;
+                            sockets[tmp_socket].time += 1;
+                            //sockets[ready_sockets[tmp_num].data.fd].mtx.unlock();
+
+                            continue;
+                        }else{
+                            tmp_string_recv_all_msg = std::string((const char*)tmp_process_msg.get_result(), tmp_process_msg.get_result_length());
+                        }
+
+                        if(!tmp_json_reader.parse(tmp_string_recv_all_msg, tmp_json_value)){
+                            write_log_mtx.lock();
+                            log_file << now_time() << '\t' << "Warning: failed to receive valid login msg from " << inet_ntoa(sockets[tmp_socket].addr) << std::endl;
+                            write_log_mtx.unlock();
+
+                            //sockets[ready_sockets[tmp_num].data.fd].mtx.lock();
+                            sockets[tmp_socket].tried_time += 1;
+                            sockets[tmp_socket].time += 1;
+                            //sockets[ready_sockets[tmp_num].data.fd].mtx.unlock();
+
+                            continue;
+                        }else{
+                            tmp_string_recv_all_msg = tmp_json_value["username"].asString();
+                            tmp_string_recv_part_msg = tmp_json_value["passwd"].asString();
+                        }
+
                         if(!db_if_opened()){
                             continue_tag = false;
                             char data = -3;
                             send(tmp_socket, &data, 1, 0);
                         }else{
-                            tmp_status = db_verify((const char*)tmp_login_msg.name, (const char*)tmp_login_msg.pass);
+                            tmp_status = db_verify(tmp_string_recv_all_msg.data(), tmp_string_recv_part_msg.data());
 
                             if(!tmp_status){
                                 sockets[tmp_socket].tried_time += 1;
                                 sockets[tmp_socket].time += 1;
                                 
                                 write_log_mtx.lock();
-                                log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized failed\n";
+                                log_file << now_time() << '\t' << "Info: user "  << tmp_string_recv_all_msg << " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized failed\n";
                                 write_log_mtx.unlock();
 
                                 char data = -1;
                                 SSL_write(sockets[tmp_socket].ssl_fd, &data, 1);
                             }else{
                                 write_log_mtx.lock();
-                                log_file << now_time() << '\t' << "Info: user "  << tmp_login_msg.name<< " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized successfully\n";
+                                log_file << now_time() << '\t' << "Info: user "  << tmp_string_recv_all_msg << " from " << inet_ntoa(sockets[tmp_socket].addr) << " authorized successfully\n";
                                 write_log_mtx.unlock();
 
                                 char data = 0;

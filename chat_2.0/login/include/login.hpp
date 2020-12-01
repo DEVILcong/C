@@ -22,12 +22,14 @@
 #include <iostream>
 
 #include <sqlite3.h>
+#include <json/json.h>
 #include <string>  //for string
 #include <vector>  //for vector
 #include <unistd.h>  //for close()
 #include <fcntl.h>  //for fcntl()
 
 #include "local_msg_type.hpp"
+#include "process_msg.hpp"
 
 #define LISTEN_PORT 22233
 #define MAX_SOCKET_NUM 1024
@@ -37,10 +39,19 @@
 
 #define MAX_ALIVE_TIME 10
 #define MAX_TRIED_TIME 3
+#define MAX_RECV_BUF_LENGTH 200
+
+#define AES_SERVER_KEY_NAME "server_keys"
+#define AES_SERVER_KEY_NUM 6
 
 #define LOG_FILE_PATH "login.log"
 #define SQLITE_FILE_PATH "chat_db.sqlite"
 #define SQL_TO_EXEC "select passwd from users where name=?1;"
+
+struct aes_key_item_t{
+    unsigned char key[AES_256_KEY_LEN];
+    unsigned char iv[AES_256_IV_LEN];
+};
 
 struct client_socket_t{
    int socket;
@@ -52,14 +63,14 @@ struct client_socket_t{
    unsigned char is_closed = false;
 };
 
-#define LOGIN_MSG_NAME_END_FLAG '$'
-struct login_message_t{
-    //unsigned short int name_length;
-    unsigned char type;
-    unsigned char none = 'N';
-    char name[25];
-    char pass[45];
-};
+// #define LOGIN_MSG_NAME_END_FLAG '$'
+// struct login_message_t{
+//     //unsigned short int name_length;
+//     unsigned char type;
+//     unsigned char none = 'N';
+//     char name[25];
+//     char pass[45];
+// };
 
 class login{
 public:
@@ -87,6 +98,8 @@ private:
     //-6: can't add listen socket to epoll
     //-7: can't open log file
     //-8: can't connct to database server
+    //-9: can't open server key file
+    //-10: can't read from server key file
 
     static sqlite3* db_sqlite;
     static sqlite3_stmt* db_sqlite_stmt;
@@ -97,6 +110,8 @@ private:
     static bool db_verify(const char* name, const char* passwd);
     static void db_close();
 
+    static struct aes_key_item_t server_keys[AES_SERVER_KEY_NUM];
+    
     static std::mutex continue_tag_mtx;
     volatile static bool continue_tag;
 
