@@ -13,6 +13,7 @@
 #include <arpa/inet.h>  //for htons
 #include <netinet/in.h>  //for inet_ntoa
 #include <mutex>  //for mutex
+#include <condition_variable>
 #include <unordered_map>  //for unordered_map
 #include <fstream>  //for ofstream
 #include <ctime>
@@ -41,12 +42,13 @@
 #define MAX_TRIED_TIME 3
 #define MAX_RECV_BUF_LENGTH 200
 
-#define AES_SERVER_KEY_NAME "server_keys"
+#define AES_SERVER_KEY_NAME "../recource/server_keys"
 #define AES_SERVER_KEY_NUM 6
 
-#define LOG_FILE_PATH "login.log"
-#define SQLITE_FILE_PATH "chat_db.sqlite"
+#define LOG_FILE_PATH "../source/login.log"
+#define SQLITE_FILE_PATH "../resource/chat_db.sqlite"
 #define SQL_TO_EXEC "select passwd from users where name=?1;"
+#define SQL_TO_EXEC_GET_USERLIST "select name from users;"
 
 struct aes_key_item_t{
     unsigned char key[AES_256_KEY_LEN];
@@ -74,10 +76,11 @@ struct client_socket_t{
 
 class login{
 public:
-    login(SSL_CTX* tmp_ssl_ctx_fd, std::queue<local_msg_type_t>* tmp_local_msg_queue, std::mutex* tmp_local_msg_queue_mtx);
+    login(SSL_CTX* tmp_ssl_ctx_fd, std::condition_variable* tmp_local_msg_queue_cv, std::mutex* tmp_local_msg_queue_mtx, std::queue<local_msg_type_t>* tmp_local_msg_queue);
     ~login();
     void init();
     char get_tag(void);
+    void send_userlist_to_server();
     static void set_continue_tag(bool tmp_tag);
     static void listener(void);
     static void cleaner(void);
@@ -87,6 +90,7 @@ private:
     static SSL_CTX* ssl_ctx_fd;
     static std::queue<local_msg_type_t>* local_msg_queue;
     static std::mutex* local_msg_queue_mtx;
+    static std::condition_variable* local_msg_queue_cv;
 
     char success_tag;
     //meanings:
@@ -103,10 +107,12 @@ private:
 
     static sqlite3* db_sqlite;
     static sqlite3_stmt* db_sqlite_stmt;
+    static sqlite3_stmt* db_sqlite_stmt_get_userlist;
     
     static bool db_open();
     static bool db_init();
     static bool db_if_opened();
+    static std::string db_get_userlist();
     static bool db_verify(const char* name, const char* passwd);
     static void db_close();
 

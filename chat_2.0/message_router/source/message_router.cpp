@@ -1,6 +1,9 @@
 #include "message_router.hpp"
 
-static mysqlpp::Connection mysql_connection;
+SSL_CTX* Message_router::ssl_ctx_fd = nullptr;
+std::condition_variable* Message_router::local_msg_queue_cv = nullptr;
+std::mutex* Message_router::local_msg_queue_mtx = nullptr;
+std::queue<struct local_msg_type_t>* Message_router::local_msg_queue = nullptr;
 
 std::mutex Message_router::log_file_mtx;
 std::ofstream Message_router::log_file;
@@ -17,13 +20,13 @@ std::vector<std::string> Message_router::user_index;
 std::unordered_map<int, std::string> Message_router::user_rindex;
 
 //std::mutex Message_router::message_queue_mtx;
-std::queue<std::unordered_map<char, std::string>> Message_router::message_queue;
-std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>> Message_router::to_be_sent_message_map;
+std::queue<struct message_item_t> Message_router::message_queue;
+std::unordered_map<std::string, std::vector<struct message_item_t>> Message_router::to_be_sent_message_map;
 
 time_t Message_router::tmp_time_t;
 std::chrono::system_clock::time_point Message_router::tmp_now_time;
 
-Message_router::Message_router(){
+Message_router::Message_router(SSL_CTX* tmp_ssl_ctx_fd = nullptr, std::condition_variable* tmp_local_queue_cv = nullptr, std::mutex* queue_mtx = nullptr, std::queue<struct local_msg_type_t>* queue_ptr = nullptr){
     epoll_fd = epoll_create(MAX_SOCKET_NUM);
     if(epoll_fd < 0){
         this->success_tag = -1;
@@ -36,26 +39,10 @@ Message_router::Message_router(){
         return;
     }
 
-    mysqlpp::Connection conn(false);
-    bool status = conn.connect(DB_NAME, DB_SERVER, DB_USER_NAME, DB_PASSWORD, DB_PORT);
-    if(!status){
-        this->success_tag = -3;
-        return;
-    }
-
-    std::string tmp_string = "select name from ";
-    tmp_string += DB_TABLE;
-    mysqlpp::StoreQueryResult tmp_query_result = conn.query(tmp_string.c_str()).store();
-    if(tmp_query_result.num_rows() == 0){
-        this->success_tag = -4;
-        return;
-    }
-
-    for(int i = 0; i < tmp_query_result.num_rows(); ++i){
-        all_users_index.push_back(std::string(tmp_query_result[i]["name"].c_str()));
-    }
-
-    conn.disconnect();
+    ssl_ctx_fd = tmp_ssl_ctx_fd;
+    local_msg_queue_mtx = queue_mtx;
+    local_msg_queue = queue_ptr;
+    local_msg_queue_cv = tmp_local_queue_cv;
 
     if_continue_tag = true;
     this->success_tag = 0;
@@ -67,72 +54,108 @@ Message_router::~Message_router(){
     for(std::vector<std::string>::iterator i = user_index.begin(); i != user_index.end(); ++i){
         close(user_map[*i].socket_fd);
     }
+
+    log_file.close();
 }
 
-bool Message_router::add_socket(const char* name, const int& socket_fd){
+void Message_router::local_msg_listener(){
     struct epoll_event tmp_event;
     struct user_item tmp_user_item;
-    std::unordered_map<std::string, std::vector<std::unordered_map<char, std::string>>>::iterator tmp_msg_map_iterator;
-    std::unique_lock<std::mutex> tmp_lock(socket_mtx);
-    //std::unique_lock<std::mutex> tmp_lock_msg(message_queue_mtx);
+    std::unordered_map<std::string, std::vector<struct message_item_t>>::iterator tmp_msg_map_iterator;
+    std::unique_lock<std::mutex> tmp_lock(socket_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_local_message_queue(*local_msg_queue_mtx, std::defer_lock);
+    std::unique_lock<std::mutex> tmp_lock_if_continue(if_continue_mtx, std::defer_lock);
 
-    tmp_event.events = EPOLLIN | EPOLLET;
-    tmp_event.data.fd = socket_fd;
+    Json::Value tmp_json_value;
+    Json::FastWriter tmp_json_writer;
+    Json::Reader tmp_json_reader;
+    std::string tmp_string;
+    
+    struct local_msg_type_t tmp_local_message;
+    struct message_item_t tmp_message;
 
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socket_fd, &tmp_event) < 0){
-        std::unique_lock<std::mutex> tmp_lock2(log_file_mtx);
-        log_file << now_time() << "\tWarning: can't add client " << name;
-        log_file << '\t' << strerror(errno) << std::endl;
+    while(1){
+        local_msg_queue_cv->wait(tmp_lock_local_message_queue);
 
-        close(socket_fd);
-        return false;
-    }else{
-        user_index.push_back(std::string(name));
-        tmp_user_item.socket_fd = socket_fd;
-        user_map[std::string(name)] = tmp_user_item;
+        tmp_lock_if_continue.lock();
+        if(!if_continue_tag)
+            break;
+        tmp_lock_if_continue.unlock();
 
-        user_rindex[socket_fd] = std::string(name);
+        char type = local_msg_queue->front().type;
+        if(type == LOCAL_MSG_TYPE_USER_LIST){
+            tmp_json_reader.parse(local_msg_queue->front().name, tmp_json_value);
+            all_users_index.clear();
 
-
-        static Json::Value tmp_json_value;
-        static Json::FastWriter tmp_json_writer;
-        static std::string tmp_string;
-        static std::unordered_map<char, std::string> tmp_unordered_map;
-
-        tmp_unordered_map.clear();
-        tmp_json_value.clear();
-        tmp_json_value["receiver"] = name;
-        tmp_json_value["sender"] = SERVER_NAME;
-        tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
-        for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
-            tmp_json_value["content"].append(Json::Value(*i));
-        }
-
-        tmp_string = tmp_json_writer.write(tmp_json_value);
-
-        tmp_unordered_map['r'] = name;
-        tmp_unordered_map['s'] = SERVER_NAME;
-        tmp_unordered_map['t'] = MSG_TYPE_GET_USER_LIST;
-        tmp_unordered_map['c'] = tmp_string;
-        tmp_unordered_map['l'] = "0";
-
-        message_queue.push(tmp_unordered_map);
-
-        tmp_msg_map_iterator= to_be_sent_message_map.find(name);
-        if(tmp_msg_map_iterator != to_be_sent_message_map.end()){
-            for(auto tmp_iterator = tmp_msg_map_iterator->second.begin(); tmp_iterator != tmp_msg_map_iterator->second.end(); ++tmp_iterator){
-                message_queue.push(*tmp_iterator);
+            for(int i = 0; i < tmp_json_value["length"].asInt(); ++i){
+                all_users_index.push_back(tmp_json_value[std::to_string(i)].asString());
             }
 
-            tmp_msg_map_iterator->second.clear();
-            to_be_sent_message_map.erase(name);
+            local_msg_queue->pop();
+
+        }else if(type == LOCAL_MSG_TYPE_USER_LOGIN){
+
+            tmp_lock.lock();
+
+            tmp_local_message.name = local_msg_queue->front().name;
+            tmp_local_message.socket_fd = local_msg_queue->front().socket_fd;
+            tmp_local_message.ssl_fd = local_msg_queue->front().ssl_fd;
+
+            local_msg_queue->pop();
+
+            tmp_event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+            tmp_event.data.fd = tmp_local_message.socket_fd;
+
+            if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tmp_local_message.socket_fd, &tmp_event) < 0){
+                std::unique_lock<std::mutex> tmp_lock2(log_file_mtx);
+                log_file << now_time() << "\tWarning: can't add client " << tmp_local_message.name;
+                log_file << '\t' << strerror(errno) << std::endl;
+
+                close(tmp_local_message.socket_fd);
+            }else{
+                user_index.push_back(tmp_local_message.name);
+                tmp_user_item.socket_fd = tmp_local_message.socket_fd;
+                tmp_user_item.ssl_fd = tmp_local_message.ssl_fd;
+                user_map[tmp_local_message.name] = tmp_user_item;
+
+                user_rindex[tmp_local_message.socket_fd] = tmp_local_message.name;
+
+                tmp_json_value.clear();
+                tmp_json_value["receiver"] = tmp_local_message.name;
+                tmp_json_value["sender"] = SERVER_NAME;
+                tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
+                for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
+                    tmp_json_value["content"].append(Json::Value(*i));
+                }
+
+                tmp_string = tmp_json_writer.write(tmp_json_value);
+
+                tmp_message.receiver = tmp_local_message.name;
+                tmp_message.sender = SERVER_NAME;
+                tmp_message.type = MSG_TYPE_GET_USER_LIST;
+                tmp_message.content = tmp_string;
+                tmp_message.tried_num = 0;
+
+                message_queue.push(tmp_message);
+
+                tmp_msg_map_iterator= to_be_sent_message_map.find(tmp_local_message.name);
+                if(tmp_msg_map_iterator != to_be_sent_message_map.end()){
+                    for(auto tmp_iterator = tmp_msg_map_iterator->second.begin(); tmp_iterator != tmp_msg_map_iterator->second.end(); ++tmp_iterator){
+                        message_queue.push(*tmp_iterator);
+                    }
+
+                    tmp_msg_map_iterator->second.clear();
+                    to_be_sent_message_map.erase(tmp_local_message.name);
+                }
+                
+                std::unique_lock<std::mutex> tmp_lock2(log_file_mtx);
+                log_file << now_time() << "\tInfo: add client " << tmp_local_message.name << std::endl;
+                log_file.flush();
+            }
+
+            tmp_lock.unlock();
         }
-        
-        std::unique_lock<std::mutex> tmp_lock2(log_file_mtx);
-        log_file << now_time() << "\tInfo: add client " << name << std::endl;
-        log_file.flush();
     }
-    return true;
 }
 
 char Message_router::get_success_tag(void){
@@ -156,14 +179,10 @@ void Message_router::message_worker(void){
     char data_buffer[MAX_BUFFER_SIZE];
     int tmp_status = 0;
 
-    std::string tmp_message_receiver;
-    std::string tmp_message_sender;
-    std::string tmp_message_type;
-    std::string tmp_message_content;
     Json::Reader tmp_json_reader;
     Json::Value tmp_json_value;
 
-    std::unordered_map<char, std::string> tmp_unordered_map;
+    struct message_item_t tmp_message;
 
     int ready_num = 0;
 
@@ -198,7 +217,7 @@ void Message_router::message_worker(void){
                     memset(data_buffer, 0, MAX_BUFFER_SIZE);
                     tmp_json_value.clear();
 
-                    tmp_status = recv(tmp_epoll_event_ptr->data.fd, data_buffer, MAX_BUFFER_SIZE, 0);
+                    tmp_status = SSL_read(user_map[user_rindex[tmp_epoll_event_ptr->data.fd]].ssl_fd, data_buffer, MAX_BUFFER_SIZE);
                     //std::cout << "recv msg " << data_buffer << std::endl;
                     if(tmp_status < 0){
                         tmp_lock_log_file.lock();
@@ -216,19 +235,12 @@ void Message_router::message_worker(void){
 
                             --user_map[user_rindex[tmp_epoll_event_ptr->data.fd]].count_down;
                         }else{
-                            tmp_message_receiver = tmp_json_value["receiver"].asString();
-                            tmp_message_sender = tmp_json_value["sender"].asString();
-                            tmp_message_type = tmp_json_value["type"].asString();
-                            tmp_message_content = std::string(data_buffer);
+                            tmp_message.receiver = tmp_json_value["receiver"].asString();
+                            tmp_message.sender = tmp_json_value["sender"].asString();
+                            tmp_message.type = tmp_json_value["type"].asString();
+                            tmp_message.content = std::string(data_buffer);
 
-                            tmp_unordered_map.clear();
-                            tmp_unordered_map['r'] = tmp_message_receiver;
-                            tmp_unordered_map['s'] = tmp_message_sender;
-                            tmp_unordered_map['t'] = tmp_message_type;
-                            tmp_unordered_map['c'] = tmp_message_content;
-                            tmp_unordered_map['l'] = "0";
-
-                            message_queue.push(tmp_unordered_map);
+                            message_queue.push(tmp_message);
                         }
                     }
                 }
@@ -245,7 +257,6 @@ void Message_router::message_worker(void){
 }
 
 void Message_router::message_consumer(void){
-    std::unordered_map<char, std::string> tmp_unordered_map;
     std::unique_lock<std::mutex> tmp_lock_if_continue_tag(if_continue_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_log_file(log_file_mtx, std::defer_lock);
     std::unique_lock<std::mutex> tmp_lock_socket(socket_mtx, std::defer_lock);
@@ -256,6 +267,8 @@ void Message_router::message_consumer(void){
     char tmp_status_to_send = 0;
     std::string tmp_string;
     std::string tmp_message_type;
+
+    struct message_item_t tmp_message;
 
     Json::FastWriter tmp_json_writer;
     Json::Reader tmp_json_reader;
@@ -280,57 +293,61 @@ void Message_router::message_consumer(void){
         tmp_message_to_handle = tmp_message_to_handle > MESSAGE_NUM_LIMIT ? tmp_message_to_handle / 2 : tmp_message_to_handle;
 
         for(int i = 0; i < tmp_message_to_handle; ++i){
-            tmp_unordered_map = message_queue.front();
+
+            tmp_message.sender = message_queue.front().sender;
+            tmp_message.receiver = message_queue.front().receiver;
+            tmp_message.type = message_queue.front().type;
+            tmp_message.content = message_queue.front().content;
+            tmp_message.tried_num = message_queue.front().tried_num;
             message_queue.pop();
 
-            if(tmp_unordered_map['r'] != SERVER_NAME){
+            if(tmp_message.receiver != SERVER_NAME){
                 //tmp_user_map_iterator = user_map.find(tmp_unordered_map['r']);
 
-                if(user_map.count(tmp_unordered_map['r']) > 0){
+                if(user_map.count(tmp_message.receiver) > 0){
 
-                    //std::cout << tmp_unordered_map['r'] << " to send exist\n";
-                    //std::cout << user_map[tmp_unordered_map['r']].count_down << '\t' << user_map[tmp_unordered_map['r']].socket_fd << std::endl;
+                    //std::cout << tmp_message.receiver << " to send exist\n" << tmp_message.content << std::endl;
 
-                    tmp_status = send(user_map[tmp_unordered_map['r']].socket_fd, tmp_unordered_map['c'].c_str(), tmp_unordered_map['c'].length(), 0);
-                    send(user_map[tmp_unordered_map['r']].socket_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE, 0);
+                    tmp_status = SSL_write(user_map[tmp_message.receiver].ssl_fd, tmp_message.content.c_str(), tmp_message.content.length());
+                    SSL_write(user_map[tmp_message.receiver].ssl_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE);
 
-                    user_map[tmp_unordered_map['s']].count_down += 1;
-                    if(user_map[tmp_unordered_map['s']].count_down > CLIENT_ALIVE_TIME_SECONDS)
-                        user_map[tmp_unordered_map['s']].count_down = CLIENT_ALIVE_TIME_SECONDS;
+                    user_map[tmp_message.sender].count_down += 1;
+                    if(user_map[tmp_message.sender].count_down > CLIENT_ALIVE_TIME_SECONDS)
+                        user_map[tmp_message.sender].count_down = CLIENT_ALIVE_TIME_SECONDS;
 
                     if(tmp_status <= 0){
                         tmp_lock_log_file.lock();
-                        log_file << now_time() << '\t' << "Warning: send message to " << tmp_unordered_map['r'] << " failed due to ";
+                        log_file << now_time() << '\t' << "Warning: send message to " << tmp_message.receiver << " failed due to ";
                         log_file << strerror(errno) << std::endl;
                         log_file.flush();
                         tmp_lock_log_file.unlock();
 
-                        if(std::stoi(tmp_unordered_map['l']) < 3){
-                            tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
-                            message_queue.push(tmp_unordered_map);
+                        if(tmp_message.tried_num < 3){
+                            tmp_message.tried_num = tmp_message.tried_num + 1;
+                            message_queue.push(tmp_message);
                         }else{
-                            to_be_sent_message_map[tmp_unordered_map['r']].push_back(tmp_unordered_map);
-                            user_map[tmp_unordered_map['s']].is_down = true;
+                            to_be_sent_message_map[tmp_message.receiver].push_back(tmp_message);
+                            user_map[tmp_message.sender].is_down = true;
                         }
                     }
                 }else{
-                    to_be_sent_message_map[tmp_unordered_map['r']].push_back(tmp_unordered_map);
+                    to_be_sent_message_map[tmp_message.receiver].push_back(tmp_message);
                 }
             }else{
                 //tmp_json_value.clear();
                 //tmp_json_reader.parse(tmp_unordered_map['c'], tmp_json_value);
-                tmp_message_type = tmp_unordered_map['t'];
+                tmp_message_type = tmp_message.type;
 
                 if(tmp_message_type == MSG_TYPE_KEEPALIVE){
-                    ++(user_map[tmp_unordered_map['s']].count_down);
-                    if(user_map[tmp_unordered_map['s']].count_down > CLIENT_ALIVE_TIME_SECONDS)
-                        user_map[tmp_unordered_map['s']].count_down = CLIENT_ALIVE_TIME_SECONDS;
+                    ++(user_map[tmp_message.sender].count_down);
+                    if(user_map[tmp_message.sender].count_down > CLIENT_ALIVE_TIME_SECONDS)
+                        user_map[tmp_message.sender].count_down = CLIENT_ALIVE_TIME_SECONDS;
 
-                    //std::cout << "recv keepalive " << tmp_unordered_map['s'] << '\t' << user_map[tmp_unordered_map['s']].count_down << '\n';
+                    //std::cout << "recv keepalive " << tmp_message.sender << '\n';
                 }else if(tmp_message_type == MSG_TYPE_GET_USER_LIST){
                     //std::cout << "recv user list\n";
                     tmp_json_value.clear();
-                    tmp_json_value["receiver"] = tmp_unordered_map['s'];
+                    tmp_json_value["receiver"] = tmp_message.sender;
                     tmp_json_value["sender"] = SERVER_NAME;
                     tmp_json_value["type"] = MSG_TYPE_GET_USER_LIST;
                     for(std::vector<std::string>::iterator i = all_users_index.begin(); i != all_users_index.end(); ++i){
@@ -339,18 +356,18 @@ void Message_router::message_consumer(void){
 
                     tmp_string = tmp_json_writer.write(tmp_json_value);
 
-                    tmp_status = send(user_map[tmp_unordered_map['s']].socket_fd, tmp_string.c_str(), tmp_string.length(), 0);
-                    send(user_map[tmp_unordered_map['s']].socket_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE, 0);
+                    tmp_status = SSL_write(user_map[tmp_message.sender].ssl_fd, tmp_string.c_str(), tmp_string.length());
+                    send(user_map[tmp_message.sender].socket_fd, MESSAGE_SPLIT, MESSAGE_SPLIT_SIZE, 0);
 
                     //std::cout << tmp_string << std::endl;
                     if(tmp_status <= 0){
-                        if(std::stoi(tmp_unordered_map['l']) < 3){
-                            tmp_unordered_map['l'] = std::to_string(std::stoi(tmp_unordered_map['l']) + 1);
-                            message_queue.push(tmp_unordered_map);
+                        if(tmp_message.tried_num < 3){
+                            tmp_message.tried_num = tmp_message.tried_num + 1;
+                            message_queue.push(tmp_message);
                         }else{
                             tmp_lock_log_file.lock();
                             log_file << now_time() << '\t' << "Warning: can't send user list to ";
-                            log_file << tmp_unordered_map['s'] << std::endl;
+                            log_file << tmp_message.sender << std::endl;
                             log_file.flush();
                             tmp_lock_log_file.unlock();
                         }

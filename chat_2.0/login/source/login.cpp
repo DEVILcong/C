@@ -5,6 +5,7 @@ struct aes_key_item_t login::server_keys[AES_SERVER_KEY_NUM];
 SSL_CTX* login::ssl_ctx_fd = nullptr;
 std::queue<local_msg_type_t>* login::local_msg_queue = nullptr;
 std::mutex* login::local_msg_queue_mtx = nullptr;
+std::condition_variable* login::local_msg_queue_cv = nullptr;
 
 std::mutex login::continue_tag_mtx;
 volatile bool login::continue_tag;
@@ -12,6 +13,7 @@ int login::listen_socket;
 
 sqlite3* login::db_sqlite = nullptr;
 sqlite3_stmt* login::db_sqlite_stmt = nullptr;
+sqlite3_stmt* login::db_sqlite_stmt_get_userlist = nullptr;
 
 std::ofstream login::log_file;
 std::mutex login::write_log_mtx;
@@ -28,10 +30,11 @@ std::vector<unsigned short int> login::to_be_cleaned_pos;
 std::time_t login::tmp_time_t;
 std::chrono::system_clock::time_point login::tmp_now_time;
 
-login::login(SSL_CTX* tmp_ssl_ctx_fd, std::queue<local_msg_type_t>* tmp_local_msg_queue = nullptr, std::mutex* tmp_local_msg_queue_mtx = nullptr){
+login::login(SSL_CTX* tmp_ssl_ctx_fd, std::condition_variable* tmp_local_msg_queue_cv = nullptr, std::mutex* tmp_local_msg_queue_mtx = nullptr, std::queue<local_msg_type_t>* tmp_local_msg_queue = nullptr){
     ssl_ctx_fd = tmp_ssl_ctx_fd;
     local_msg_queue = tmp_local_msg_queue;
     local_msg_queue_mtx = tmp_local_msg_queue_mtx;
+    local_msg_queue_cv = tmp_local_msg_queue_cv;
     
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(listen_socket < 0){
@@ -61,8 +64,6 @@ login::login(SSL_CTX* tmp_ssl_ctx_fd, std::queue<local_msg_type_t>* tmp_local_ms
     if(!log_file.is_open())
         this->success_tag = -7;
 
-    //std::cout << "Socket: " << listen_socket << std::endl;
-
     return;
 }
 
@@ -74,6 +75,7 @@ login::~login(){
         close(*it);
     }
 
+    log_file.close();
     close(epoll_fd);
     close(listen_socket);
     db_close();
@@ -112,11 +114,44 @@ bool login::db_init(){
         return false;
     }
 
+    status = sqlite3_prepare_v2(db_sqlite, SQL_TO_EXEC_GET_USERLIST, sizeof(SQL_TO_EXEC_GET_USERLIST), &db_sqlite_stmt_get_userlist, nullptr);
+    if(status != SQLITE_OK){
+        std::cout << "ERROR: can't init sqlite database\n";
+        std::cout << '\t' << sqlite3_errmsg(db_sqlite) << std::endl;
+
+        return false;
+    }
+
     return true;
 }
 
 bool login::db_if_opened(){
     return true;
+}
+
+std::string login::db_get_userlist(){
+    sqlite3_reset(db_sqlite_stmt_get_userlist);
+
+    static Json::FastWriter tmp_json_writer;
+    static Json::Value tmp_json_value;
+
+    tmp_json_value.clear();
+
+    int user_num = 0;
+
+    std::string tmp_string;
+    int status = sqlite3_step(db_sqlite_stmt_get_userlist);
+
+    while(status == SQLITE_ROW){
+        tmp_json_value[std::to_string(user_num++)] = std::string((const char*)sqlite3_column_text(db_sqlite_stmt_get_userlist, 0));
+
+        status = sqlite3_step(db_sqlite_stmt_get_userlist);
+    }
+
+    tmp_json_value["length"] = user_num;
+    tmp_string = tmp_json_writer.write(tmp_json_value);
+
+    return tmp_string;
 }
 
 bool login::db_verify(const char* name, const char* passwd){
@@ -146,6 +181,20 @@ bool login::db_verify(const char* name, const char* passwd){
 void login::db_close(void){
     sqlite3_finalize(db_sqlite_stmt);
     sqlite3_close_v2(db_sqlite);
+}
+
+void login::send_userlist_to_server(){
+    struct local_msg_type_t tmp_local_msg;
+
+    tmp_local_msg.type = LOCAL_MSG_TYPE_USER_LIST;
+    tmp_local_msg.ssl_fd = nullptr;
+    tmp_local_msg.socket_fd = 0;
+    tmp_local_msg.name = db_get_userlist();
+
+    local_msg_queue_mtx->lock();
+    local_msg_queue->push(tmp_local_msg);
+    local_msg_queue_mtx->unlock();
+    local_msg_queue_cv->notify_all();
 }
 
 void login::init(){
@@ -223,6 +272,7 @@ void login::listener(void){
 
     int status = 0;
     SSL* tmp_ssl_fd = nullptr;
+    struct local_msg_type_t tmp_local_msg;
 
     bool tmp_status = false;
 
@@ -413,6 +463,16 @@ void login::listener(void){
 
                                 char data = 0;
                                 SSL_write(sockets[tmp_socket].ssl_fd, &data, 1);
+
+                                tmp_local_msg.type = LOCAL_MSG_TYPE_USER_LOGIN;
+                                tmp_local_msg.name = tmp_string_recv_all_msg;
+                                tmp_local_msg.socket_fd = tmp_socket;
+                                tmp_local_msg.ssl_fd = sockets[tmp_socket].ssl_fd;
+
+                                local_msg_queue_mtx->lock();
+                                local_msg_queue->push(tmp_local_msg);
+                                local_msg_queue_mtx->unlock();
+                                local_msg_queue_cv->notify_all();
 
                                 std::vector<int>::iterator i = socket_catalogue.begin();
                                 for(i; i != socket_catalogue.end(); ++i){
