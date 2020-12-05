@@ -32,23 +32,7 @@
 #include "local_msg_type.hpp"
 #include "process_msg.hpp"
 
-#define LISTEN_PORT 22233
-#define MAX_SOCKET_NUM 1024
-#define MAX_READY_SOCKET_NUM MAX_SOCKET_NUM/2
-#define EPOLL_WAIT_TIMEOUT 2000
-#define MAX_LISTEN_QUEUE 10
-
-#define MAX_ALIVE_TIME 10
-#define MAX_TRIED_TIME 3
-#define MAX_RECV_BUF_LENGTH 200
-
-#define AES_SERVER_KEY_NAME "../recource/server_keys"
-#define AES_SERVER_KEY_NUM 6
-
-#define LOG_FILE_PATH "../source/login.log"
-#define SQLITE_FILE_PATH "../resource/chat_db.sqlite"
-#define SQL_TO_EXEC "select passwd from users where name=?1;"
-#define SQL_TO_EXEC_GET_USERLIST "select name from users;"
+extern Json::Value json_config;
 
 struct aes_key_item_t{
     unsigned char key[AES_256_KEY_LEN];
@@ -116,7 +100,7 @@ private:
     static bool db_verify(const char* name, const char* passwd);
     static void db_close();
 
-    static struct aes_key_item_t server_keys[AES_SERVER_KEY_NUM];
+    static struct aes_key_item_t* server_keys_ptr;
     
     static std::mutex continue_tag_mtx;
     volatile static bool continue_tag;
@@ -127,7 +111,7 @@ private:
     static std::mutex write_log_mtx;
 
     static int epoll_fd;
-    static struct epoll_event ready_sockets[MAX_READY_SOCKET_NUM];
+    static struct epoll_event* ready_sockets_ptr;
 
     static std::mutex socket_list_mtx;
     static std::vector<int> socket_catalogue;

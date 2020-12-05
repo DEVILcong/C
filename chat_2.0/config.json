@@ -1,0 +1,49 @@
+{
+    "login":{
+        "listen_port": 22233,        //服务端监听端口
+        "max_socket_num": 1024,      //可同时管理的最大socket数
+        "max_ready_socket_num": 512, //一次可以处理的最大socket数
+        "epoll_wait_time_out": 2000, //epoll_wait时的延时
+        "listen_queue_max_num": 10,  //监听socket一次可以accept的最大socket数
+        
+        "socket_max_alive_time": 10, //socket啥也不干时的存活时间
+        "login_max_try_time": 3,     //最大登录尝试次数
+        "recv_buffer_max_length": 300,  //socket接收缓冲区大小
+        
+        "aes_server_key_file": "../resource/server_keys",  //服务端AES密钥文件的路径
+        "aes_server_key_num": 6,      //上面的密钥文件中有多少个AES密钥
+        
+        "log_file_path": "../resource/login.log",  //日志文件路径
+        "sqlite_file_path": "../resource/chat_db.sqlite",  //sqlite数据库文件路径
+        "sql_to_exec_get_passwd": "select passwd from users where name=?1;",  //根据用户名获取密码时的SQL语句
+        "sql_to_exec_get_all_users": "select name from users;"   //获取所有用户名列表时的SQL语句
+    },
+
+    "message_router":{
+        "max_socket_num": 1024,   //可同时管理的最大socket数，及client数
+        "max_buffer_size": 2048,  //socket接收缓冲区大小
+        "epoll_timeout": 500,     //epoll_wait时的延时
+        "message_num_limit": 10,   //消息队列中的消息数目低于此值时全部处理，否则处理一半
+        "log_file_path": "../resource/message_router.log",  //日志文件路径
+
+        "server_name": "server",   //表示本服务器的用户名
+        "msg_type_normal": "msg",  //普通聊天消息类型
+        "msg_type_error": "error", //错误信息类型  实际未用到
+        "msg_type_keepalive": "keep",  //心跳包消息类型
+        "msg_type_get_user_list": "get",  //client获取所用用户列表或服务端发送的用户列表类型
+        "msg_value_failed": "-1",   //错误包的值  实际未用到
+
+        "client_alive_time_seconds": 15,  //客户端啥也不干时的存活时间
+        "cleaner_start_interval_seconds": 5,  //清理线程启动间隔
+
+        //消息分界
+        "message_spliter": "\n\n",  //转发消息时分割两条消息
+        "message_spliter_size": 2   //上面的大小
+    },
+
+    "main":{
+        "CA_cert": "../resource/cacert.pem",    //CA证书 实际没用到
+        "server_pub_cert": "../resource/test1.cer",  //服务端公钥证书 PEM格式
+        "server_priv_key": "../resource/test1.pem"   //服务端私钥 PEM格式
+    }
+}

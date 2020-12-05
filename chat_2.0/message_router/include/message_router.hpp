@@ -29,38 +29,13 @@
 
 #include "local_msg_type.hpp"
 
-#define MAX_SOCKET_NUM 1024
-#define MAX_BUFFER_SIZE 2048
-#define EPOLL_TIMEOUT 500
-#define MESSAGE_NUM_LIMIT 10   //消息队列中的消息数目低于此值时全部处理，否则处理一半
-#define LOG_FILE "message_router.log"
-
-#define SERVER_NAME "server"
-#define MSG_TYPE_NORMAL "msg"
-#define MSG_TYPE_ERORR "error"
-#define MSG_TYPE_KEEPALIVE "keep"
-#define MSG_TYPE_GET_USER_LIST "get"
-#define MSG_VALUE_FAILED "-1"
-
-#define DB_NAME "chat"
-#define DB_SERVER "127.0.0.1"
-#define DB_USER_NAME "login"
-#define DB_PASSWORD "77777777"
-#define DB_PORT 33060
-#define DB_TABLE "users"
-
-#define CLIENT_ALIVE_TIME_SECONDS 15
-#define CLEANER_START_INTERVAL_SECONDS 5
-
-//消息分界
-#define MESSAGE_SPLIT "\n\n"
-#define MESSAGE_SPLIT_SIZE 2
+extern Json::Value json_config;
 
 struct user_item{
     int socket_fd;
     SSL* ssl_fd;
-    short int count_down = CLIENT_ALIVE_TIME_SECONDS;
-    bool is_down = false;
+    short int count_down;
+    bool is_down = true;
 };
 
 struct message_item_t{
@@ -101,7 +76,7 @@ private:
     static std::ofstream log_file;
 
     static std::mutex socket_mtx;
-    static epoll_event epoll_events[MAX_SOCKET_NUM / 2];
+    static epoll_event* epoll_events_ptr;
     static int epoll_fd;
     static std::unordered_map<std::string, struct user_item> user_map;
     static std::vector<std::string> all_users_index;

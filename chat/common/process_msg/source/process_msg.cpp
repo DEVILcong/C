@@ -318,6 +318,13 @@ void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
 
     if(0 == enc){
         this->base64_decode(str, length);
+        if(!this->isValid){
+#ifdef _OUTPUT_
+            std::cout << "ERROR: base64 decode in AES process error\n";
+#endif
+            return;
+        }
+
         data_ptr = this->buffer.get();
         data_length = this->buffer_length;
     }
@@ -338,6 +345,7 @@ void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
         return;
     }
 
+    EVP_CIPHER_CTX_set_padding(this->evp_cipher_ctx, EVP_PADDING_PKCS7);
     buf_ptr = new unsigned char[data_length + 32];
     memset(buf_ptr, 0, data_length + 32);
 
@@ -348,7 +356,7 @@ void ProcessMsg::AES_256_process(const char* str, size_t length, int enc){
     status = EVP_CipherFinal_ex(this->evp_cipher_ctx, &(buf_ptr[final_data_length]), &outlen);
     if(1 != status){
 #ifdef _OUTPUT_
-        std::cout << "ERROR: an error occured when finishing AES-256 process" << std::endl;
+        std::cout << "ERROR: an error occured when finishing AES-256 process " << status << std::endl;
 #endif
         this->isValid = false;
     }

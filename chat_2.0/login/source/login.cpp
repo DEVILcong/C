@@ -1,6 +1,6 @@
 #include "login.hpp"
 
-struct aes_key_item_t login::server_keys[AES_SERVER_KEY_NUM];
+struct aes_key_item_t* login::server_keys_ptr = nullptr;
 
 SSL_CTX* login::ssl_ctx_fd = nullptr;
 std::queue<local_msg_type_t>* login::local_msg_queue = nullptr;
@@ -19,7 +19,7 @@ std::ofstream login::log_file;
 std::mutex login::write_log_mtx;
 
 int login::epoll_fd;
-struct epoll_event login::ready_sockets[MAX_READY_SOCKET_NUM];
+struct epoll_event* login::ready_sockets_ptr = nullptr;
 
 std::mutex login::socket_list_mtx;
 std::vector<int> login::socket_catalogue;
@@ -35,6 +35,9 @@ login::login(SSL_CTX* tmp_ssl_ctx_fd, std::condition_variable* tmp_local_msg_que
     local_msg_queue = tmp_local_msg_queue;
     local_msg_queue_mtx = tmp_local_msg_queue_mtx;
     local_msg_queue_cv = tmp_local_msg_queue_cv;
+
+    server_keys_ptr = new(struct aes_key_item_t[json_config["login"]["aes_server_key_num"].asInt()]);
+    ready_sockets_ptr = new(epoll_event[json_config["login"]["max_ready_socket_num"].asInt()]);
     
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(listen_socket < 0){
@@ -46,7 +49,7 @@ login::login(SSL_CTX* tmp_ssl_ctx_fd, std::condition_variable* tmp_local_msg_que
     struct sockaddr_in myaddr;
     memset(&myaddr, 0, sizeof(myaddr));
     myaddr.sin_family = AF_INET;
-    myaddr.sin_port = htons(LISTEN_PORT);
+    myaddr.sin_port = htons(json_config["login"]["listen_port"].asInt());
     myaddr.sin_addr.s_addr = INADDR_ANY;
 
     if(bind(listen_socket, (const struct sockaddr*)&myaddr, sizeof(myaddr)) == -1){
@@ -57,10 +60,10 @@ login::login(SSL_CTX* tmp_ssl_ctx_fd, std::condition_variable* tmp_local_msg_que
 
     this->success_tag = 0;
     
-    memset(ready_sockets, 0, MAX_READY_SOCKET_NUM*sizeof(epoll_event));
+    memset(ready_sockets_ptr, 0, json_config["login"]["max_ready_socket_num"].asInt()*sizeof(epoll_event));
     continue_tag = true;
     
-    log_file.open(LOG_FILE_PATH, std::ofstream::out| std::ofstream::app);
+    log_file.open(json_config["login"]["log_file_path"].asString(), std::ofstream::out| std::ofstream::app);
     if(!log_file.is_open())
         this->success_tag = -7;
 
@@ -75,6 +78,9 @@ login::~login(){
         close(*it);
     }
 
+    delete [] server_keys_ptr;
+    delete [] ready_sockets_ptr;
+    
     log_file.close();
     close(epoll_fd);
     close(listen_socket);
@@ -92,7 +98,7 @@ void login::set_continue_tag(bool tmp_tag){
 }
 
 bool login::db_open(){
-    int status = sqlite3_open_v2(SQLITE_FILE_PATH, &db_sqlite, SQLITE_OPEN_READWRITE, NULL);
+    int status = sqlite3_open_v2(json_config["login"]["sqlite_file_path"].asCString(), &db_sqlite, SQLITE_OPEN_READWRITE, NULL);
 
     if(status != SQLITE_OK){
         std::cout << "ERROR: can't open sqlite database\n";
@@ -105,7 +111,7 @@ bool login::db_open(){
 }
 
 bool login::db_init(){
-    int status = sqlite3_prepare_v2(db_sqlite, SQL_TO_EXEC, sizeof(SQL_TO_EXEC), &db_sqlite_stmt, nullptr);
+    int status = sqlite3_prepare_v2(db_sqlite, json_config["login"]["sql_to_exec_get_passwd"].asCString(), strlen(json_config["login"]["sql_to_exec_get_passwd"].asCString()), &db_sqlite_stmt, nullptr);
     
     if(status != SQLITE_OK){
         std::cout << "ERROR: can't init sqlite database\n";
@@ -114,7 +120,7 @@ bool login::db_init(){
         return false;
     }
 
-    status = sqlite3_prepare_v2(db_sqlite, SQL_TO_EXEC_GET_USERLIST, sizeof(SQL_TO_EXEC_GET_USERLIST), &db_sqlite_stmt_get_userlist, nullptr);
+    status = sqlite3_prepare_v2(db_sqlite, json_config["login"]["sql_to_exec_get_all_users"].asCString(), strlen(json_config["login"]["sql_to_exec_get_all_users"].asCString()), &db_sqlite_stmt_get_userlist, nullptr);
     if(status != SQLITE_OK){
         std::cout << "ERROR: can't init sqlite database\n";
         std::cout << '\t' << sqlite3_errmsg(db_sqlite) << std::endl;
@@ -198,7 +204,7 @@ void login::send_userlist_to_server(){
 }
 
 void login::init(){
-    epoll_fd = epoll_create(MAX_SOCKET_NUM);
+    epoll_fd = epoll_create(json_config["login"]["max_socket_num"].asInt());
     //std::cout << "Epoll_fd: " << epoll_fd << std::endl;
 
     if(fcntl(listen_socket, F_SETFL, fcntl(listen_socket, F_GETFL, 0) | O_NONBLOCK) < 0){
@@ -207,7 +213,7 @@ void login::init(){
         return;
     }
 
-    if(listen(listen_socket, MAX_LISTEN_QUEUE) < 0){
+    if(listen(listen_socket, json_config["login"]["listen_queue_max_num"].asInt()) < 0){
         this->success_tag = -5;
         std::cout << strerror(errno) << std::endl;
         return;
@@ -232,19 +238,19 @@ void login::init(){
 
     log_file << now_time() << '\t' << "Info: open database successfully\n";
 
-    std::ifstream server_keys_file(AES_SERVER_KEY_NAME, std::ifstream::in | std::ifstream::binary);
+    std::ifstream server_keys_file(json_config["login"]["aes_server_key_file"].asString(), std::ifstream::in | std::ifstream::binary);
     if(!server_keys_file.is_open()){
         std::cout << "ERROR: can't open server key file\n";
         this->success_tag = -9;
         return;
     }
-    server_keys_file.read((char*)&server_keys, AES_SERVER_KEY_NUM*sizeof(struct aes_key_item_t));
+    server_keys_file.read((char*)server_keys_ptr, json_config["login"]["aes_server_key_num"].asInt()*sizeof(struct aes_key_item_t));
     if(!server_keys_file){
         std::cout << "ERROR: can't read from server key file\n";
         this->success_tag = -10;
         return;
     }
-    std::cout << "Info: get server keys successfuly\n";
+    log_file << "Info: get server keys successfuly\n";
 
     this->success_tag = 0;
     return;
@@ -262,10 +268,10 @@ void login::listener(void){
 
     Json::Reader tmp_json_reader;
     Json::Value tmp_json_value;
-    char recv_buf[MAX_RECV_BUF_LENGTH];
+    char recv_buf[json_config["login"]["recv_buffer_max_length"].asInt()];
     std::string tmp_string_recv_all_msg;
     std::string tmp_string_recv_part_msg;
-    ProcessMsg tmp_process_msg(server_keys[0].key, server_keys[0].iv);
+    ProcessMsg tmp_process_msg(server_keys_ptr[0].key, server_keys_ptr[0].iv);
 
     unsigned short int msg_length;
     char openssl_err_buf[30];
@@ -275,6 +281,11 @@ void login::listener(void){
     struct local_msg_type_t tmp_local_msg;
 
     bool tmp_status = false;
+
+    int max_ready_socket_num = json_config["login"]["max_ready_socket_num"].asInt();
+    int epoll_wait_timeout = json_config["login"]["epoll_wait_time_out"].asInt();
+    int listen_queue_max_num = json_config["login"]["listen_queue_max_num"].asInt();
+    int recv_buffer_max_length = json_config["login"]["recv_buffer_max_length"].asInt();
 
     while(1){                            //ATTENTION!!!!!!!!
         continue_tag_mtx.lock();
@@ -286,8 +297,8 @@ void login::listener(void){
         
         socket_list_mtx.lock();
 
-        memset(ready_sockets, 0, MAX_READY_SOCKET_NUM*sizeof(epoll_event));
-        tmp_socket_num = epoll_wait(epoll_fd, ready_sockets, MAX_READY_SOCKET_NUM, EPOLL_WAIT_TIMEOUT);
+        memset(ready_sockets_ptr, 0, max_ready_socket_num*sizeof(epoll_event));
+        tmp_socket_num = epoll_wait(epoll_fd, ready_sockets_ptr, max_ready_socket_num, epoll_wait_timeout);
         
         if(tmp_socket_num == -1){
             write_log_mtx.lock();
@@ -299,13 +310,13 @@ void login::listener(void){
         if(tmp_socket_num > 0){
             for(tmp_num = 0; tmp_num < tmp_socket_num; ++tmp_num){
 
-                if((ready_sockets[tmp_num].events & EPOLLERR) || !(ready_sockets[tmp_num].events & EPOLLIN)){
+                if((ready_sockets_ptr[tmp_num].events & EPOLLERR) || !(ready_sockets_ptr[tmp_num].events & EPOLLIN)){
                     write_log_mtx.lock();
                     log_file << now_time() << '\t' << "Warning: socket error\n";
                     write_log_mtx.unlock();
                     continue;
-                }else if(ready_sockets[tmp_num].events & EPOLLRDHUP){   //socket被客户端关闭
-                    tmp_socket = ready_sockets[tmp_num].data.fd;
+                }else if(ready_sockets_ptr[tmp_num].events & EPOLLRDHUP){   //socket被客户端关闭
+                    tmp_socket = ready_sockets_ptr[tmp_num].data.fd;
 
                     write_log_mtx.lock();
                     log_file << now_time() << '\t' << "Warning: " << inet_ntoa(sockets[tmp_socket].addr) << " close itself\n";
@@ -315,9 +326,9 @@ void login::listener(void){
                     continue;
                 }
                 
-                if(ready_sockets[tmp_num].data.fd == listen_socket){  //信息来自监听socket
+                if(ready_sockets_ptr[tmp_num].data.fd == listen_socket){  //信息来自监听socket
                     //std::cout << "Listener accept socket\n";
-                    for(tmp_num_2 = 0; tmp_num_2 < MAX_LISTEN_QUEUE; ++tmp_num_2){
+                    for(tmp_num_2 = 0; tmp_num_2 < listen_queue_max_num; ++tmp_num_2){
                         tmp_socket = accept(listen_socket, (sockaddr*)&tmp_sockaddr, &sock_addr_length);
                         if(tmp_socket == -1 )
                             break;
@@ -377,10 +388,10 @@ void login::listener(void){
 
                     }
                 }else{  //信息来自连接的客户端socket
-                    tmp_socket = ready_sockets[tmp_num].data.fd;
-                    memset(recv_buf, 0, MAX_RECV_BUF_LENGTH);
+                    tmp_socket = ready_sockets_ptr[tmp_num].data.fd;
+                    memset(recv_buf, 0, recv_buffer_max_length);
 
-                    msg_length = SSL_read(sockets[tmp_socket].ssl_fd, recv_buf, MAX_RECV_BUF_LENGTH);
+                    msg_length = SSL_read(sockets[tmp_socket].ssl_fd, recv_buf, recv_buffer_max_length);
                     // for(int i = 0; i < 5 && msg_length <= 0; ++i){
                     //     msg_length = SSL_get_error(sockets[tmp_socket].ssl_fd, msg_length);
                     //     if(msg_length == SSL_ERROR_WANT_READ || msg_length == SSL_ERROR_WANT_WRITE){
@@ -406,7 +417,7 @@ void login::listener(void){
                         tmp_num_2 = tmp_json_value["value"].asInt();
                         tmp_string_recv_all_msg = tmp_json_value["info"].asString();
 
-                        tmp_process_msg.AES_256_change_key(server_keys[tmp_num_2].key, server_keys[tmp_num_2].iv);
+                        tmp_process_msg.AES_256_change_key(server_keys_ptr[tmp_num_2].key, server_keys_ptr[tmp_num_2].iv);
                         tmp_process_msg.AES_256_process(tmp_string_recv_all_msg.data(), tmp_string_recv_all_msg.length(), 0);
                         if(!tmp_process_msg.ifValid()){
                             write_log_mtx.lock();
@@ -502,6 +513,9 @@ void login::cleaner(void){
     unsigned short int order_tmp = 0;
     int socket_tmp = 0;
 
+    int socket_max_alive_time = json_config["login"]["socket_max_alive_time"].asInt();
+    int login_max_try_time = json_config["login"]["login_max_try_time"].asInt();
+
     while(1){                   //ATTENTION!!!!!!!
         continue_tag_mtx.lock();
         if(continue_tag == false){
@@ -516,7 +530,7 @@ void login::cleaner(void){
 
         for(order_tmp = 0; order_tmp < socket_catalogue.size(); ++order_tmp){
             socket_tmp = socket_catalogue[order_tmp];
-            if(sockets[socket_tmp].time > MAX_ALIVE_TIME || sockets[socket_tmp].tried_time > MAX_TRIED_TIME || sockets[socket_tmp].is_closed == true){
+            if(sockets[socket_tmp].time > socket_max_alive_time || sockets[socket_tmp].tried_time > login_max_try_time || sockets[socket_tmp].is_closed == true){
                 to_be_cleaned_val.push_back(socket_tmp);
                 to_be_cleaned_pos.push_back(order_tmp);
             }
