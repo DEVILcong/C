@@ -37,8 +37,8 @@
         "cleaner_start_interval_seconds": 5,  //清理线程启动间隔
 
         //消息分界
-        "message_spliter": "\n\n",  //转发消息时分割两条消息
-        "message_spliter_size": 2   //上面的大小
+        "message_spliter": "#",  //转发消息时分割两条消息
+        "message_spliter_size": 1   //上面的大小
     },
 
     "main":{
