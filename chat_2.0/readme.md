@@ -1,16 +1,17 @@
-注意:本文档pdf版位于./docs文件夹中,推荐看pdf版本,github不能正常显示插入的图片; 流程图等也位于./docs文件夹中。
+注意:本文档pdf版位于./docs文件夹中,推荐看pdf版本,github不能正常显示插入的图片; 流程图等也位于./docs文件夹中，相关配置信息见config.json。
 
 # 0. 前言
 
 ​	一. 使用C++开发，运行在linux环境下;
 
-​	二. 服务端需要安装依赖mysql++和jsoncpp;
+​	二. 服务端需要安装依赖sqlite3和jsoncpp;
 
 ​	三. 服务端开放22233端口作为监听及通信端口。
 
-​	四. 需要mysql数据库用来保存用户名等基本信息。
+​	四. 需要sqlite3数据库用来保存用户名等基本信息。
 
 # 1. 服务端结构
+图中数据库已更换为sqlite
 
 ![](./docs/图片/server_structure.png)
 
@@ -32,9 +33,7 @@
 
 ​		cleaner负责定期清理down掉的客户端	
 
-# 2. MySql 配置示例
-
-CREATE DATABASE chat;
+# 2. sqlite3 配置示例
 
 CREATE TABLE users(
 
@@ -46,9 +45,6 @@ CREATE TABLE users(
 
 );
 
-CREATE USER "liang"@"%" IDENTIFIED BY "77777777";
-
-GRANT SELECT ON chat.users TO "liang";
 
 
 
